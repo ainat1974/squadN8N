@@ -3,6 +3,8 @@
 // ============================================================
 import { useErpData } from '../hooks/useErpData'
 import { api, formatBRL, formatDate, formatNum } from '../services/api'
+import { usePeriod } from '../context/PeriodContext'
+import { filterByRecentDays, periodDays, periodLabel } from '../utils/period'
 import {
   Chart as ChartJS, CategoryScale, LinearScale, BarElement,
   LineElement, PointElement, Title, Tooltip, Legend, Filler
@@ -15,31 +17,55 @@ ChartJS.register(
 )
 
 export default function OverviewPage() {
-  const resumo = useErpData(api.resumo)
-  const vendas = useErpData(api.vendas)
-  const estoque = useErpData(api.estoque)
-  const financeiro = useErpData(api.contasReceber)
+  const { period } = usePeriod()
+  const diasPeriodo = periodDays(period)
+  const periodoLabel = periodLabel(period)
+  const requestOptions = { periodo: period, dias: diasPeriodo }
+
+  const resumo = useErpData(() => api.resumo(requestOptions), [period])
+  const vendas = useErpData(() => api.vendas(requestOptions), [period])
+  const estoque = useErpData(() => api.estoque(requestOptions), [period])
+  const financeiro = useErpData(() => api.contasReceber(requestOptions), [period])
+  const fluxoCaixa = useErpData(() => api.fluxoCaixa(requestOptions), [period])
 
   const d = resumo.data as any
   const atualizadoEm = d?.atualizadoEm ? formatDate(d.atualizadoEm) : null
 
-  // Dados para gráfico de evolução de receita
-  const evolucaoDiaria: any[] = (vendas.data as any)?.dados?.evolucao_diaria || []
+  const evolucaoDiariaAll: any[] = (vendas.data as any)?.dados?.evolucao_diaria || []
+  const evolucaoDiaria = filterByRecentDays(evolucaoDiariaAll, diasPeriodo, item => item.data)
+  const receitaPeriodo = evolucaoDiaria.reduce((total: number, item: any) => total + Number(item.receita || 0), 0)
+  const volumePeriodo = evolucaoDiaria.reduce((total: number, item: any) => total + Number(item.volume || 0), 0)
+
   const chartLabels = evolucaoDiaria.map((e: any, i: number) => {
     if (!e.data) return `Per.${i + 1}`
-    const d = new Date(e.data)
-    return isNaN(d.getTime()) ? e.data : d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })
+    const dt = new Date(e.data)
+    return isNaN(dt.getTime()) ? e.data : dt.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })
   })
   const chartReceita = evolucaoDiaria.map((e: any) => e.receita || 0)
 
-  // Top SKUs para reposição
-  const reposicao: any[] = (estoque.data as any)?.dados?.reposicao_urgente?.slice(0, 5) || []
+  // ── Estoque: críticos, alerta e top 5 baixo estoque ───────
+  const estoqueData = (estoque.data as any)?.dados
+  const estoqueSummary = estoqueData?.summary || {}
+  const reposicaoUrgente: any[] = estoqueData?.reposicao_urgente || []
+  const saldoDia: any[] = estoqueData?.saldo_dia || []
 
-  // Vencimentos próximos (CR recebendo em 7d + CP vencendo em 7d)
+  // Se não há reposicao_urgente com dados de velocidade, usa os 5 produtos
+  // com menor estoque_atual como proxy de "atenção"
+  const proxyBaixoEstoque: any[] = saldoDia
+    .filter((item: any) => item.estoque_atual > 0)
+    .sort((a: any, b: any) => a.estoque_atual - b.estoque_atual)
+    .slice(0, 5)
+
+  const reposicao = reposicaoUrgente.length > 0
+    ? reposicaoUrgente.slice(0, 5)
+    : proxyBaixoEstoque
+
+  const usandoProxy = reposicaoUrgente.length === 0 && proxyBaixoEstoque.length > 0
+
+  // ── Vencimentos próximos (CR) ──────────────────────────────
   const recebendo7d: any[] = (financeiro.data as any)?.dados?.recebendo_7d?.slice(0, 5) || []
 
-  // Fluxo de caixa
-  const fluxoCaixa = useErpData(api.fluxoCaixa)
+  // ── Fluxo de caixa ─────────────────────────────────────────
   const projecao: any[] = (fluxoCaixa.data as any)?.dados?.projecao_4_semanas || []
   const fluxoLabels = projecao.map((p: any) => p.semana)
   const fluxoEntradas = projecao.map((p: any) => p.entradas_previstas)
@@ -52,9 +78,14 @@ export default function OverviewPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-bold text-[#f1f5f9]">Visão Geral Executiva</h1>
-        {atualizadoEm && (
-          <span className="text-xs text-[#64748b]">Atualizado em {atualizadoEm}</span>
-        )}
+        <div className="flex items-center gap-3">
+          <span className="text-xs text-[#38bdf8] font-medium bg-[#0f172a] border border-[#334155] px-2 py-1 rounded">
+            Período: {periodoLabel}
+          </span>
+          {atualizadoEm && (
+            <span className="text-xs text-[#64748b]">Atualizado em {atualizadoEm}</span>
+          )}
+        </div>
       </div>
 
       {hasError && (
@@ -68,8 +99,8 @@ export default function OverviewPage() {
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
         <KPICard
           icon="💰" label="Receita do Período"
-          value={isLoading ? '...' : formatBRL(d?.receita_total || 0)}
-          sub={d ? `${formatNum(d.volume_vendas)} vendas` : null}
+          value={isLoading ? '...' : formatBRL(receitaPeriodo || d?.receita_total || 0)}
+          sub={d || evolucaoDiaria.length > 0 ? `${formatNum(volumePeriodo || d?.volume_vendas || 0)} vendas · ${periodoLabel}` : null}
           color="success"
         />
         <KPICard
@@ -80,8 +111,17 @@ export default function OverviewPage() {
         />
         <KPICard
           icon="📦" label="Estoque Crítico"
-          value={isLoading ? '...' : `${formatNum(d?.skus_criticos || 0)} SKUs`}
-          sub={d ? `${formatNum(d.skus_alerta || 0)} em alerta` : null}
+          value={isLoading ? '...' : `${formatNum(estoqueSummary.skus_criticos || d?.skus_criticos || 0)} SKUs`}
+          sub={
+            isLoading ? null :
+            (() => {
+              const total = estoqueSummary.total_skus || saldoDia.length || 0
+              const alerta = estoqueSummary.skus_alerta || d?.skus_alerta || 0
+              const criticos = estoqueSummary.skus_criticos || d?.skus_criticos || 0
+              if (total > 0 && criticos === 0) return `${formatNum(alerta)} em alerta · ${formatNum(total)} total`
+              return `${formatNum(alerta)} em alerta · ${formatNum(total)} total`
+            })()
+          }
           color="warning"
         />
         <KPICard
@@ -96,7 +136,9 @@ export default function OverviewPage() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {/* Evolução de Receita */}
         <div className="bg-[#1e293b] rounded-xl p-5 border border-[#475569]">
-          <h3 className="text-sm font-medium text-[#94a3b8] mb-4">📈 Evolução de Receita (últimos 7 dias)</h3>
+          <h3 className="text-sm font-medium text-[#94a3b8] mb-4">
+            📈 Evolução de Receita ({periodoLabel})
+          </h3>
           {vendas.loading ? (
             <Skeleton height="h-40" />
           ) : evolucaoDiaria.length > 0 ? (
@@ -154,23 +196,38 @@ export default function OverviewPage() {
 
       {/* Alertas Rápidos */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {/* Top 5 SKUs para Reposição */}
+        {/* Top 5 SKUs para Reposição / Menor Estoque */}
         <div className="bg-[#1e293b] rounded-xl p-5 border border-[#475569]">
-          <h3 className="text-sm font-medium text-[#94a3b8] mb-4">🔴 Top 5 SKUs para Reposição</h3>
+          <h3 className="text-sm font-medium text-[#94a3b8] mb-1">
+            {usandoProxy ? '⚠️ Top 5 SKUs com Menor Estoque' : '🔴 Top 5 SKUs para Reposição'}
+          </h3>
+          {usandoProxy && (
+            <p className="text-xs text-[#64748b] mb-3">
+              Análise de velocidade indisponível — exibindo produtos com menor saldo atual
+            </p>
+          )}
           {estoque.loading ? <Skeleton /> : reposicao.length > 0 ? (
             <ul className="space-y-2">
               {reposicao.map((item: any, i: number) => (
                 <li key={i} className="flex items-center justify-between text-sm">
-                  <span className="text-[#cbd5e1] truncate max-w-[60%]">{item.produto}</span>
-                  <span className={`font-medium text-xs px-2 py-1 rounded-full ${
-                    item.urgencia === 'CRITICO' ? 'bg-red-900 text-red-300' : 'bg-yellow-900 text-yellow-300'
-                  }`}>
-                    {item.dias_ate_zerar}d — {item.urgencia}
+                  <span className="text-[#cbd5e1] truncate max-w-[60%]">
+                    {item.produto || item.descricao || 'Produto ' + (i + 1)}
                   </span>
+                  {usandoProxy ? (
+                    <span className="font-medium text-xs px-2 py-1 rounded-full bg-blue-900 text-blue-300">
+                      {formatNum(item.estoque_atual)} un
+                    </span>
+                  ) : (
+                    <span className={`font-medium text-xs px-2 py-1 rounded-full ${
+                      item.urgencia === 'CRITICO' ? 'bg-red-900 text-red-300' : 'bg-yellow-900 text-yellow-300'
+                    }`}>
+                      {item.dias_ate_zerar}d — {item.urgencia}
+                    </span>
+                  )}
                 </li>
               ))}
             </ul>
-          ) : <EmptyList msg="Nenhum SKU crítico" />}
+          ) : <EmptyList msg="Nenhum dado de estoque disponível" />}
         </div>
 
         {/* Vencimentos em 7 dias */}

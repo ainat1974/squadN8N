@@ -1,0 +1,608 @@
+{
+  "name": "Tech Malhas - Coleta ERP Dapic Otimizado",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 6 * * *"
+            }
+          ]
+        }
+      },
+      "id": "trigger-cron",
+      "name": "⏰ Cron Diário 06:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        240,
+        300
+      ],
+      "notes": "Executa automaticamente todo dia às 06:00"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "atualizar",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "trigger-webhook",
+      "name": "🔄 Webhook Manual",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [
+        240,
+        480
+      ],
+      "webhookId": "tech-malhas-atualizar",
+      "notes": "Acionado pelo botão 'Atualizar Agora' no dashboard"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "data-hoje",
+              "name": "dataHoje",
+              "value": "={{ new Date().toISOString().split('T')[0] }}",
+              "type": "string"
+            },
+            {
+              "id": "data-30d",
+              "name": "data30DiasAtras",
+              "value": "={{ new Date(Date.now() - 30*24*60*60*1000).toISOString().split('T')[0] }}",
+              "type": "string"
+            },
+            {
+              "id": "data-90d",
+              "name": "data90DiasAtras",
+              "value": "={{ new Date(Date.now() - 90*24*60*60*1000).toISOString().split('T')[0] }}",
+              "type": "string"
+            },
+            {
+              "id": "data-mais-30d",
+              "name": "dataMais30Dias",
+              "value": "={{ new Date(Date.now() + 30*24*60*60*1000).toISOString().split('T')[0] }}",
+              "type": "string"
+            },
+            {
+              "id": "data-mais-7d",
+              "name": "dataMais7Dias",
+              "value": "={{ new Date(Date.now() + 7*24*60*60*1000).toISOString().split('T')[0] }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-periodo",
+      "name": "📅 Definir Período",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.3,
+      "position": [
+        720,
+        380
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.dapic.app/autenticacao/v1/login",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "Empresa",
+              "value": "={{ $vars.DAPIC_EMPRESA }}"
+            },
+            {
+              "name": "TokenIntegracao",
+              "value": "={{ $vars.DAPIC_TOKEN_INTEGRACAO }}"
+            }
+          ]
+        },
+        "options": {
+          "retry": {
+            "enabled": true,
+            "maxRetries": 3,
+            "retryInterval": 1000
+          }
+        }
+      },
+      "id": "auth-dapic",
+      "name": "🔐 Autenticar Dapic",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        960,
+        380
+      ],
+      "notes": "Obter access_token válido por 24h. Configurar N8N Variables: DAPIC_EMPRESA=techmalhasfranca, DAPIC_TOKEN_INTEGRACAO=<valor>",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
+    },
+    {
+      "parameters": {
+        "jsCode": "// Preparar contexto da execução com token e datas\nconst auth = $('🔐 Autenticar Dapic').first().json;\nconst periodo = $('📅 Definir Período').first().json;\n\nif (!auth.access_token) {\n  throw new Error('Falha na autenticação Dapic: access_token não retornado');\n}\n\nreturn [{\n  json: {\n    token: auth.access_token,\n    dataHoje: periodo.dataHoje,\n    data30DiasAtras: periodo.data30DiasAtras,\n    data90DiasAtras: periodo.data90DiasAtras,\n    dataMais30Dias: periodo.dataMais30Dias,\n    dataMais7Dias: periodo.dataMais7Dias,\n    baseUrl: 'https://api.dapic.app',\n    iniciadoEm: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "preparar-contexto",
+      "name": "💾 Preparar Contexto",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        380
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// COLETAR VENDAS — Pedidos B2B + PDV + Produtos Vendidos\n// ============================================================\nconst ctx = $('💾 Preparar Contexto').first().json;\nconst { token, dataHoje, data90DiasAtras, baseUrl } = ctx;\n\nasync function sleep(ms) {\n  return new Promise(resolve => setTimeout(resolve, ms));\n}\n\nlet currentToken = token;\n\nasync function refreshToken() {\n  const auth = await this.helpers.httpRequest({\n    method: 'POST',\n    url: baseUrl + '/autenticacao/v1/login',\n    headers: { 'Content-Type': 'application/json' },\n    body: {\n      Empresa: $vars.DAPIC_EMPRESA,\n      TokenIntegracao: $vars.DAPIC_TOKEN_INTEGRACAO\n    },\n    json: true\n  });\n\n  if (!auth.access_token) {\n    throw new Error('Falha ao renovar token Dapic: access_token nao retornado');\n  }\n\n  currentToken = auth.access_token;\n  return currentToken;\n}\n\nasync function requestDapic(endpoint, params = {}, retry401 = true) {\n  const delays = [1000, 2000, 4000];\n\n  for (let attempt = 0; attempt <= delays.length; attempt++) {\n    try {\n      return await this.helpers.httpRequest({\n        method: 'GET',\n        url: baseUrl + endpoint,\n        headers: { Authorization: 'Bearer ' + currentToken },\n        qs: params,\n        json: true,\n        resolveWithFullResponse: false\n      });\n    } catch (error) {\n      const status = error.httpCode || error.statusCode || error.response?.statusCode;\n\n      if (status === 401 && retry401) {\n        await refreshToken.call(this);\n        return requestDapic.call(this, endpoint, params, false);\n      }\n\n      if ((status === 429 || status >= 500) && attempt < delays.length) {\n        await sleep(delays[attempt]);\n        continue;\n      }\n\n      throw error;\n    }\n  }\n}\n\nasync function fetchAllPages(endpoint, params = {}) {\n  let allData = [];\n  let pagina = 1;\n  let totalPaginas = 1;\n\n  do {\n    const response = await requestDapic.call(this, endpoint, {\n      ...params,\n      Pagina: pagina,\n      RegistrosPorPagina: 200\n    });\n\n    if (response.Dados && response.Dados.length > 0) {\n      allData = allData.concat(response.Dados);\n    }\n    totalPaginas = response.TotalPaginas || 1;\n\n    if (pagina < totalPaginas) {\n      await sleep(650);\n    }\n    pagina++;\n  } while (pagina <= totalPaginas);\n\n  return allData;\n}\n// 1. Pedidos de Venda B2B (faturados)\nconst pedidosVenda = await fetchAllPages.call(this, '/v1/pedidosvendas', {\n  DataInicial: data90DiasAtras,\n  DataFinal: dataHoje,\n  Status: 5,\n  FiltrarPor: 0\n});\n\nawait new Promise(r => setTimeout(r, 650));\n\n// 2. Vendas PDV\nconst vendasPDV = await fetchAllPages.call(this, '/v1/vendas', {\n  DataInicial: data90DiasAtras,\n  DataFinal: dataHoje,\n  Status: 5\n});\n\nawait new Promise(r => setTimeout(r, 650));\n\n// 3. Produtos Vendidos (consolidado para ranking)\nconst produtosVendidos = await fetchAllPages.call(this, '/v1/vendas/produtosvendidos', {\n  DataInicial: data90DiasAtras,\n  DataFinal: dataHoje\n});\n\nreturn [{ json: { pedidosVenda, vendasPDV, produtosVendidos, coletadoEm: new Date().toISOString() } }];"
+      },
+      "id": "coletar-vendas",
+      "name": "📊 Coletar Vendas",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1440,
+        160
+      ],
+      "notes": "Coleta Pedidos B2B + Vendas PDV + Produtos Vendidos com paginação completa"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// COLETAR ESTOQUE — Saldo Atual + Movimentações 30 dias\n// ============================================================\nconst ctx = $('💾 Preparar Contexto').first().json;\nconst { token, dataHoje, data30DiasAtras, baseUrl } = ctx;\n\nasync function sleep(ms) {\n  return new Promise(resolve => setTimeout(resolve, ms));\n}\n\nlet currentToken = token;\n\nasync function refreshToken() {\n  const auth = await this.helpers.httpRequest({\n    method: 'POST',\n    url: baseUrl + '/autenticacao/v1/login',\n    headers: { 'Content-Type': 'application/json' },\n    body: {\n      Empresa: $vars.DAPIC_EMPRESA,\n      TokenIntegracao: $vars.DAPIC_TOKEN_INTEGRACAO\n    },\n    json: true\n  });\n\n  if (!auth.access_token) {\n    throw new Error('Falha ao renovar token Dapic: access_token nao retornado');\n  }\n\n  currentToken = auth.access_token;\n  return currentToken;\n}\n\nasync function requestDapic(endpoint, params = {}, retry401 = true) {\n  const delays = [1000, 2000, 4000];\n\n  for (let attempt = 0; attempt <= delays.length; attempt++) {\n    try {\n      return await this.helpers.httpRequest({\n        method: 'GET',\n        url: baseUrl + endpoint,\n        headers: { Authorization: 'Bearer ' + currentToken },\n        qs: params,\n        json: true,\n        resolveWithFullResponse: false\n      });\n    } catch (error) {\n      const status = error.httpCode || error.statusCode || error.response?.statusCode;\n\n      if (status === 401 && retry401) {\n        await refreshToken.call(this);\n        return requestDapic.call(this, endpoint, params, false);\n      }\n\n      if ((status === 429 || status >= 500) && attempt < delays.length) {\n        await sleep(delays[attempt]);\n        continue;\n      }\n\n      throw error;\n    }\n  }\n}\n\nasync function fetchAllPages(endpoint, params = {}) {\n  let allData = [];\n  let pagina = 1;\n  let totalPaginas = 1;\n\n  do {\n    const response = await requestDapic.call(this, endpoint, {\n      ...params,\n      Pagina: pagina,\n      RegistrosPorPagina: 200\n    });\n\n    if (response.Dados && response.Dados.length > 0) {\n      allData = allData.concat(response.Dados);\n    }\n    totalPaginas = response.TotalPaginas || 1;\n\n    if (pagina < totalPaginas) {\n      await sleep(650);\n    }\n    pagina++;\n  } while (pagina <= totalPaginas);\n\n  return allData;\n}\n// 1. Estoque atual (todos os armazenadores)\nconst estoqueAtual = await fetchAllPages.call(this, '/v1/estoques/todos');\n\n// 2. Movimentações últimos 30 dias (rate limit: max 31d por request)\nawait new Promise(r => setTimeout(r, 2000)); // endpoint volumoso\nconst movimentacoes30d = await fetchAllPages.call(this, '/v1/movimentacoesestoque', {\n  DataInicial: data30DiasAtras,\n  DataFinal: dataHoje\n});\n\n// 3. Movimentações esta semana vs semana anterior (para tendência)\nconst hoje = new Date();\nconst inicioSemanaAtual = new Date(hoje);\ninicioSemanaAtual.setDate(hoje.getDate() - hoje.getDay());\nconst inicioSemanaAnterior = new Date(inicioSemanaAtual);\ninicioSemanaAnterior.setDate(inicioSemanaAtual.getDate() - 7);\n\nawait new Promise(r => setTimeout(r, 2000));\nconst movimentacoesSemanaAnterior = await fetchAllPages.call(this, '/v1/movimentacoesestoque', {\n  DataInicial: inicioSemanaAnterior.toISOString().split('T')[0],\n  DataFinal: inicioSemanaAtual.toISOString().split('T')[0]\n});\n\nreturn [{ json: { estoqueAtual, movimentacoes30d, movimentacoesSemanaAnterior, coletadoEm: new Date().toISOString() } }];"
+      },
+      "id": "coletar-estoque",
+      "name": "📦 Coletar Estoque",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1440,
+        360
+      ],
+      "notes": "Coleta saldo atual + movimentações 30d para análise de reposição"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// COLETAR CONTAS A PAGAR\n// ============================================================\nconst ctx = $('💾 Preparar Contexto').first().json;\nconst { token, dataHoje, data90DiasAtras, dataMais30Dias, baseUrl } = ctx;\n\nasync function sleep(ms) {\n  return new Promise(resolve => setTimeout(resolve, ms));\n}\n\nlet currentToken = token;\n\nasync function refreshToken() {\n  const auth = await this.helpers.httpRequest({\n    method: 'POST',\n    url: baseUrl + '/autenticacao/v1/login',\n    headers: { 'Content-Type': 'application/json' },\n    body: {\n      Empresa: $vars.DAPIC_EMPRESA,\n      TokenIntegracao: $vars.DAPIC_TOKEN_INTEGRACAO\n    },\n    json: true\n  });\n\n  if (!auth.access_token) {\n    throw new Error('Falha ao renovar token Dapic: access_token nao retornado');\n  }\n\n  currentToken = auth.access_token;\n  return currentToken;\n}\n\nasync function requestDapic(endpoint, params = {}, retry401 = true) {\n  const delays = [1000, 2000, 4000];\n\n  for (let attempt = 0; attempt <= delays.length; attempt++) {\n    try {\n      return await this.helpers.httpRequest({\n        method: 'GET',\n        url: baseUrl + endpoint,\n        headers: { Authorization: 'Bearer ' + currentToken },\n        qs: params,\n        json: true,\n        resolveWithFullResponse: false\n      });\n    } catch (error) {\n      const status = error.httpCode || error.statusCode || error.response?.statusCode;\n\n      if (status === 401 && retry401) {\n        await refreshToken.call(this);\n        return requestDapic.call(this, endpoint, params, false);\n      }\n\n      if ((status === 429 || status >= 500) && attempt < delays.length) {\n        await sleep(delays[attempt]);\n        continue;\n      }\n\n      throw error;\n    }\n  }\n}\n\nasync function fetchAllPages(endpoint, params = {}) {\n  let allData = [];\n  let pagina = 1;\n  let totalPaginas = 1;\n\n  do {\n    const response = await requestDapic.call(this, endpoint, {\n      ...params,\n      Pagina: pagina,\n      RegistrosPorPagina: 200\n    });\n\n    if (response.Dados && response.Dados.length > 0) {\n      allData = allData.concat(response.Dados);\n    }\n    totalPaginas = response.TotalPaginas || 1;\n\n    if (pagina < totalPaginas) {\n      await sleep(650);\n    }\n    pagina++;\n  } while (pagina <= totalPaginas);\n\n  return allData;\n}\n// Parcelas a pagar: período amplo (vencidos + próximos 30d)\nconst parcelasPagar = await fetchAllPages.call(this, '/v1/contas/parcelas', {\n  DataInicial: data90DiasAtras,\n  DataFinal: dataMais30Dias,\n  FiltrarPor: 0\n});\n\n// Filtrar apenas Contas a Pagar (Tipo = Pagar)\nconst contasPagar = parcelasPagar.filter(p => \n  (String(p.Tipo || p.tipo || p.TipoLancamento || p.Natureza || '').toLowerCase()).includes('pagar')\n);\n\nreturn [{ json: { contasPagar, coletadoEm: new Date().toISOString() } }];"
+      },
+      "id": "coletar-cp",
+      "name": "💸 Coletar Contas a Pagar",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1440,
+        560
+      ],
+      "notes": "Coleta parcelas a pagar: vencidas + próximas 30 dias"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// COLETAR CONTAS A RECEBER\n// ============================================================\nconst ctx = $('💾 Preparar Contexto').first().json;\nconst { token, dataHoje, data90DiasAtras, dataMais30Dias, baseUrl } = ctx;\n\nasync function sleep(ms) {\n  return new Promise(resolve => setTimeout(resolve, ms));\n}\n\nlet currentToken = token;\n\nasync function refreshToken() {\n  const auth = await this.helpers.httpRequest({\n    method: 'POST',\n    url: baseUrl + '/autenticacao/v1/login',\n    headers: { 'Content-Type': 'application/json' },\n    body: {\n      Empresa: $vars.DAPIC_EMPRESA,\n      TokenIntegracao: $vars.DAPIC_TOKEN_INTEGRACAO\n    },\n    json: true\n  });\n\n  if (!auth.access_token) {\n    throw new Error('Falha ao renovar token Dapic: access_token nao retornado');\n  }\n\n  currentToken = auth.access_token;\n  return currentToken;\n}\n\nasync function requestDapic(endpoint, params = {}, retry401 = true) {\n  const delays = [1000, 2000, 4000];\n\n  for (let attempt = 0; attempt <= delays.length; attempt++) {\n    try {\n      return await this.helpers.httpRequest({\n        method: 'GET',\n        url: baseUrl + endpoint,\n        headers: { Authorization: 'Bearer ' + currentToken },\n        qs: params,\n        json: true,\n        resolveWithFullResponse: false\n      });\n    } catch (error) {\n      const status = error.httpCode || error.statusCode || error.response?.statusCode;\n\n      if (status === 401 && retry401) {\n        await refreshToken.call(this);\n        return requestDapic.call(this, endpoint, params, false);\n      }\n\n      if ((status === 429 || status >= 500) && attempt < delays.length) {\n        await sleep(delays[attempt]);\n        continue;\n      }\n\n      throw error;\n    }\n  }\n}\n\nasync function fetchAllPages(endpoint, params = {}) {\n  let allData = [];\n  let pagina = 1;\n  let totalPaginas = 1;\n\n  do {\n    const response = await requestDapic.call(this, endpoint, {\n      ...params,\n      Pagina: pagina,\n      RegistrosPorPagina: 200\n    });\n\n    if (response.Dados && response.Dados.length > 0) {\n      allData = allData.concat(response.Dados);\n    }\n    totalPaginas = response.TotalPaginas || 1;\n\n    if (pagina < totalPaginas) {\n      await sleep(650);\n    }\n    pagina++;\n  } while (pagina <= totalPaginas);\n\n  return allData;\n}\n// Parcelas a receber\nconst todasParcelas = await fetchAllPages.call(this, '/v1/contas/parcelas', {\n  DataInicial: data90DiasAtras,\n  DataFinal: dataMais30Dias,\n  FiltrarPor: 0\n});\n\n// Filtrar apenas Contas a Receber\nconst contasReceber = todasParcelas.filter(p =>\n  (String(p.Tipo || p.tipo || p.TipoLancamento || p.Natureza || '').toLowerCase()).includes('receber')\n);\n\nreturn [{ json: { contasReceber, coletadoEm: new Date().toISOString() } }];"
+      },
+      "id": "coletar-cr",
+      "name": "💰 Coletar Contas a Receber",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1440,
+        760
+      ],
+      "notes": "Coleta parcelas a receber: inadimplentes + próximas 30 dias"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// TRANSFORMAR VENDAS — Calcular KPIs\n// ============================================================\nconst { pedidosVenda, vendasPDV, produtosVendidos } = $('📊 Coletar Vendas').first().json;\nconst ctx = $('💾 Preparar Contexto').first().json;\n\n// Período anterior (mesmo número de dias imediatamente antes)\nconst hoje = new Date(ctx.dataHoje);\nconst inicio = new Date(ctx.data30DiasAtras);\nconst diasPeriodo = Math.floor((hoje - inicio) / (1000*60*60*24));\n\n// Helper: agrupar por data\nfunction agruparPorData(items, campoData, campoValor) {\n  const mapa = {};\n  for (const item of items) {\n    const data = (item[campoData] || '').split('T')[0];\n    if (!mapa[data]) mapa[data] = { data, receita: 0, volume: 0 };\n    mapa[data].receita += Number(item[campoValor] || 0);\n    mapa[data].volume += 1;\n  }\n  return Object.values(mapa).sort((a, b) => a.data.localeCompare(b.data));\n}\n\n// Receita total B2B\nconst receitaB2B = pedidosVenda.reduce((s, p) => s + Number(p.ValorLiquido || 0), 0);\nconst volumeB2B = pedidosVenda.length;\n\n// Receita total PDV\nconst receitaPDV = vendasPDV.reduce((s, v) => s + Number(v.ValorLiquido || 0), 0);\nconst volumePDV = vendasPDV.length;\n\nconst receitaTotal = receitaB2B + receitaPDV;\nconst volumeTotal = volumeB2B + volumePDV;\nconst ticketMedio = volumeTotal > 0 ? receitaTotal / volumeTotal : 0;\n\n// Evolução diária (combinando B2B + PDV)\nconst evolucaoB2B = agruparPorData(pedidosVenda, 'DataEmissao', 'ValorLiquido');\nconst evolucaoPDV = agruparPorData(vendasPDV, 'DataEmissao', 'ValorLiquido');\n\n// Mesclar evoluções\nconst mapaEvolucao = {};\nfor (const d of [...evolucaoB2B, ...evolucaoPDV]) {\n  if (!mapaEvolucao[d.data]) mapaEvolucao[d.data] = { data: d.data, receita: 0, volume: 0 };\n  mapaEvolucao[d.data].receita += d.receita;\n  mapaEvolucao[d.data].volume += d.volume;\n}\nconst evolucaoDiaria = Object.values(mapaEvolucao).sort((a, b) => a.data.localeCompare(b.data));\n\n// Top 10 produtos por receita\nconst produtosOrdenados = [...produtosVendidos]\n  .sort((a, b) => Number(b.ValorTotal || b.ValorLiquido || 0) - Number(a.ValorTotal || a.ValorLiquido || 0))\n  .slice(0, 10)\n  .map(p => ({\n    produto: p.Produto || p.Nome || p.Descricao || 'N/A',\n    receita: Number(p.ValorTotal || p.ValorLiquido || 0),\n    quantidade: Number(p.Quantidade || 0)\n  }));\n\n// Top 10 clientes por receita (de pedidos B2B)\nconst mapaClientes = {};\nfor (const p of pedidosVenda) {\n  const cliente = p.Cliente || 'N/A';\n  if (!mapaClientes[cliente]) mapaClientes[cliente] = { cliente, receita: 0, volume: 0 };\n  mapaClientes[cliente].receita += Number(p.ValorLiquido || 0);\n  mapaClientes[cliente].volume += 1;\n}\nconst topClientes = Object.values(mapaClientes)\n  .sort((a, b) => b.receita - a.receita)\n  .slice(0, 10);\n\n// Representantes (campo Representante nos pedidos, se disponível)\nconst mapaRepresentantes = {};\nfor (const p of pedidosVenda) {\n  const rep = p.Representante || p.Vendedor || 'Direto';\n  if (!mapaRepresentantes[rep]) mapaRepresentantes[rep] = { representante: rep, receita: 0, pedidos: 0 };\n  mapaRepresentantes[rep].receita += Number(p.ValorLiquido || 0);\n  mapaRepresentantes[rep].pedidos += 1;\n}\nconst porRepresentante = Object.values(mapaRepresentantes)\n  .sort((a, b) => b.receita - a.receita)\n  .map(r => ({ ...r, ticket_medio: r.pedidos > 0 ? r.receita / r.pedidos : 0 }));\n\nconst vendas = {\n  gerado_em: new Date().toISOString(),\n  periodo: { inicio: ctx.data30DiasAtras, fim: ctx.dataHoje },\n  summary: {\n    receita_total: Math.round(receitaTotal * 100) / 100,\n    volume_vendas: volumeTotal,\n    ticket_medio: Math.round(ticketMedio * 100) / 100,\n    variacao_mes_anterior_pct: 0, // será calculado quando tivermos período anterior\n    receita_b2b: Math.round(receitaB2B * 100) / 100,\n    receita_pdv: Math.round(receitaPDV * 100) / 100\n  },\n  evolucao_diaria: evolucaoDiaria,\n  top_produtos: produtosOrdenados,\n  top_clientes: topClientes,\n  por_representante: porRepresentante\n};\n\nreturn [{ json: { modulo: 'vendas', dados: vendas } }];"
+      },
+      "id": "transformar-vendas",
+      "name": "🔄 Transformar Vendas",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1700,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// TRANSFORMAR ESTOQUE — Calcular KPIs de Reposição\n// ============================================================\nconst { estoqueAtual, movimentacoes30d, movimentacoesSemanaAnterior } = $('📦 Coletar Estoque').first().json;\nconst ctx = $('💾 Preparar Contexto').first().json;\n\nconst hoje = new Date(ctx.dataHoje);\n\n// Calcular venda média diária por produto (últimos 30 dias)\nconst vendasPorProduto = {};\nfor (const mov of movimentacoes30d) {\n  const produto = mov.Produto || mov.CodigoProduto || 'N/A';\n  const quantidade = Math.abs(Number(mov.Quantidade || 0));\n  const tipo = (mov.Tipo || mov.TipoMovimento || '').toLowerCase();\n  \n  // Apenas saídas (vendas)\n  if (tipo.includes('saida') || tipo.includes('venda') || tipo.includes('saída')) {\n    if (!vendasPorProduto[produto]) vendasPorProduto[produto] = 0;\n    vendasPorProduto[produto] += quantidade;\n  }\n}\n\n// Movimentações semana atual\nconst vendasSemanaAtual = {};\nconst inicioSemana = new Date(hoje);\ninicioSemana.setDate(hoje.getDate() - hoje.getDay());\n\nfor (const mov of movimentacoes30d) {\n  const dataMov = new Date((mov.DataMovimento || mov.Data || '').split('T')[0]);\n  if (dataMov >= inicioSemana) {\n    const produto = mov.Produto || mov.CodigoProduto || 'N/A';\n    const quantidade = Math.abs(Number(mov.Quantidade || 0));\n    const tipo = (mov.Tipo || mov.TipoMovimento || '').toLowerCase();\n    if (tipo.includes('saida') || tipo.includes('venda') || tipo.includes('saída')) {\n      if (!vendasSemanaAtual[produto]) vendasSemanaAtual[produto] = 0;\n      vendasSemanaAtual[produto] += quantidade;\n    }\n  }\n}\n\n// Movimentações semana anterior\nconst vendasSemAnt = {};\nfor (const mov of movimentacoesSemanaAnterior) {\n  const produto = mov.Produto || mov.CodigoProduto || 'N/A';\n  const quantidade = Math.abs(Number(mov.Quantidade || 0));\n  const tipo = (mov.Tipo || mov.TipoMovimento || '').toLowerCase();\n  if (tipo.includes('saida') || tipo.includes('venda') || tipo.includes('saída')) {\n    if (!vendasSemAnt[produto]) vendasSemAnt[produto] = 0;\n    vendasSemAnt[produto] += quantidade;\n  }\n}\n\n// Calcular indicadores por produto\nlet valorTotalEstoque = 0;\nconst saldoDia = [];\nconst reposicaoUrgente = [];\nconst tendenciaSemanal = [];\n\nfor (const item of estoqueAtual) {\n  const produto = item.Produto || item.Nome || 'N/A';\n  const codigo = item.CodigoProduto || item.Codigo || 'N/A';\n  const estoqueQtd = Number(item.Quantidade || 0);\n  const valorUnitario = Number(item.ValorUnitario || item.Preco || 0);\n  \n  valorTotalEstoque += estoqueQtd * valorUnitario;\n  \n  const vendasDia = vendasSemanaAtual[produto] ? vendasSemanaAtual[produto] / 7 : 0;\n  const saldo = estoqueQtd - vendasDia;\n  const statusSaldo = saldo < 0 ? 'CRITICO' : saldo < (estoqueQtd * 0.1) ? 'ALERTA' : 'OK';\n  \n  saldoDia.push({ produto, codigo, estoque_atual: estoqueQtd, vendas_hoje: Math.round(vendasDia * 10) / 10, saldo: Math.round(saldo * 10) / 10, status: statusSaldo });\n  \n  // Dias até zerar\n  const vendaMediaDiaria = (vendasPorProduto[produto] || 0) / 30;\n  if (vendaMediaDiaria > 0) {\n    const diasAteZerar = Math.floor(estoqueQtd / vendaMediaDiaria);\n    let urgencia = 'OK';\n    if (diasAteZerar <= 7) urgencia = 'CRITICO';\n    else if (diasAteZerar <= 15) urgencia = 'ALERTA';\n    \n    if (urgencia !== 'OK') {\n      reposicaoUrgente.push({ produto, codigo, estoque_atual: estoqueQtd, venda_media_diaria: Math.round(vendaMediaDiaria * 10) / 10, dias_ate_zerar: diasAteZerar, urgencia });\n    }\n  }\n  \n  // Tendência semanal\n  const semAtual = vendasSemanaAtual[produto] || 0;\n  const semAnt = vendasSemAnt[produto] || 0;\n  if (semAtual > 0 || semAnt > 0) {\n    const variacaoPct = semAnt > 0 ? ((semAtual - semAnt) / semAnt) * 100 : 100;\n    tendenciaSemanal.push({ produto, vendas_semana_atual: semAtual, vendas_semana_anterior: semAnt, variacao_pct: Math.round(variacaoPct * 10) / 10, tendencia: variacaoPct > 5 ? 'subindo' : variacaoPct < -5 ? 'caindo' : 'estavel' });\n  }\n}\n\n// Ordenar reposição por urgência\nreposicaoUrgente.sort((a, b) => a.dias_ate_zerar - b.dias_ate_zerar);\n\nconst skusCriticos = reposicaoUrgente.filter(r => r.urgencia === 'CRITICO').length;\nconst skusAlerta = reposicaoUrgente.filter(r => r.urgencia === 'ALERTA').length;\n\nconst estoque = {\n  gerado_em: new Date().toISOString(),\n  summary: {\n    valor_total_estoque: Math.round(valorTotalEstoque * 100) / 100,\n    skus_criticos: skusCriticos,\n    skus_alerta: skusAlerta,\n    giro_estoque_30d: 0\n  },\n  saldo_dia: saldoDia,\n  reposicao_urgente: reposicaoUrgente,\n  tendencia_semanal: tendenciaSemanal.sort((a, b) => Math.abs(b.variacao_pct) - Math.abs(a.variacao_pct)).slice(0, 20)\n};\n\nreturn [{ json: { modulo: 'estoque', dados: estoque } }];"
+      },
+      "id": "transformar-estoque",
+      "name": "🔄 Transformar Estoque",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1700,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// TRANSFORMAR FINANCEIRO — CP + CR + Fluxo de Caixa\n// ============================================================\nconst { contasPagar } = $('💸 Coletar Contas a Pagar').first().json;\nconst { contasReceber } = $('💰 Coletar Contas a Receber').first().json;\nconst ctx = $('💾 Preparar Contexto').first().json;\n\nconst hoje = new Date(ctx.dataHoje);\nconst daqui7Dias = new Date(ctx.dataMais7Dias);\n\nfunction calcularDiasAtraso(dataVencStr) {\n  const dataVenc = new Date(dataVencStr.split('T')[0]);\n  return Math.floor((hoje - dataVenc) / (1000*60*60*24));\n}\n\nfunction getNumSemana(data) {\n  const d = new Date(data);\n  const startOfYear = new Date(d.getFullYear(), 0, 1);\n  const weekNum = Math.ceil(((d - startOfYear) / 86400000 + startOfYear.getDay() + 1) / 7);\n  return `${d.getFullYear()}-W${String(weekNum).padStart(2, '0')}`;\n}\n\nconst statusPago = ['Pago', 'pago', 'Liquidado', 'Recebido', 'recebido', 'Baixado'];\n\n// ===== CONTAS A PAGAR =====\nconst cpPendentes = contasPagar.filter(p => !statusPago.includes(p.Status));\nconst cpVencidos = cpPendentes.filter(p => new Date(p.DataVencimento) < hoje);\nconst cpVencendo7d = cpPendentes.filter(p => {\n  const venc = new Date(p.DataVencimento);\n  return venc >= hoje && venc <= daqui7Dias;\n});\n\nconst totalCP = cpPendentes.reduce((s, p) => s + Number(p.Valor || 0), 0);\nconst totalCPVencido = cpVencidos.reduce((s, p) => s + Number(p.Valor || 0), 0);\nconst totalCPVencendo7d = cpVencendo7d.reduce((s, p) => s + Number(p.Valor || 0), 0);\n\n// Fluxo semanal CP (saídas projetadas)\nconst fluxoCP = {};\nfor (const p of cpPendentes) {\n  const semana = getNumSemana(p.DataVencimento.split('T')[0]);\n  if (!fluxoCP[semana]) fluxoCP[semana] = 0;\n  fluxoCP[semana] += Number(p.Valor || 0);\n}\n\n// ===== CONTAS A RECEBER =====\nconst crPendentes = contasReceber.filter(p => !statusPago.includes(p.Status));\nconst crInadimplentes = crPendentes.filter(p => new Date(p.DataVencimento) < hoje);\nconst crRecebendo7d = crPendentes.filter(p => {\n  const venc = new Date(p.DataVencimento);\n  return venc >= hoje && venc <= daqui7Dias;\n});\n\nconst totalCR = crPendentes.reduce((s, p) => s + Number(p.Valor || 0), 0);\nconst totalCRInadimplente = crInadimplentes.reduce((s, p) => s + Number(p.Valor || 0), 0);\nconst totalCRRecebendo7d = crRecebendo7d.reduce((s, p) => s + Number(p.Valor || 0), 0);\nconst saldoLiquido = totalCR - totalCP;\n\n// Fluxo semanal CR (entradas projetadas)\nconst fluxoCR = {};\nfor (const p of crPendentes) {\n  const semana = getNumSemana(p.DataVencimento.split('T')[0]);\n  if (!fluxoCR[semana]) fluxoCR[semana] = 0;\n  fluxoCR[semana] += Number(p.Valor || 0);\n}\n\n// Projeção 4 semanas consolidada\nconst todasSemanas = new Set([...Object.keys(fluxoCP), ...Object.keys(fluxoCR)]);\nconst semanasOrdenadas = Array.from(todasSemanas).sort().slice(0, 4);\nlet saldoAcumulado = 0;\nconst projecao4Semanas = semanasOrdenadas.map(semana => {\n  const entradas = fluxoCR[semana] || 0;\n  const saidas = fluxoCP[semana] || 0;\n  const saldoSemana = entradas - saidas;\n  saldoAcumulado += saldoSemana;\n  return { semana, entradas_previstas: Math.round(entradas*100)/100, saidas_previstas: Math.round(saidas*100)/100, saldo_semana: Math.round(saldoSemana*100)/100, saldo_acumulado: Math.round(saldoAcumulado*100)/100 };\n});\n\nconst contasPagarJSON = {\n  gerado_em: new Date().toISOString(),\n  summary: { total_pendente: Math.round(totalCP*100)/100, total_vencido: Math.round(totalCPVencido*100)/100, total_vencendo_7d: Math.round(totalCPVencendo7d*100)/100 },\n  vencidos: cpVencidos.sort((a,b) => Number(b.Valor||0) - Number(a.Valor||0)).slice(0,50).map(p => ({ id: p.Id, descricao: p.Descricao||p.NomeFornecedor||'N/A', valor: Number(p.Valor||0), data_vencimento: (p.DataVencimento||'').split('T')[0], dias_atraso: calcularDiasAtraso(p.DataVencimento||ctx.dataHoje) })),\n  vencendo_7d: cpVencendo7d.sort((a,b) => Number(b.Valor||0) - Number(a.Valor||0)).map(p => ({ id: p.Id, descricao: p.Descricao||p.NomeFornecedor||'N/A', valor: Number(p.Valor||0), data_vencimento: (p.DataVencimento||'').split('T')[0] })),\n  fluxo_semanal: Object.entries(fluxoCP).sort().map(([semana, total]) => ({ semana, total_saidas: Math.round(total*100)/100 }))\n};\n\nconst contasReceberJSON = {\n  gerado_em: new Date().toISOString(),\n  summary: { total_pendente: Math.round(totalCR*100)/100, total_inadimplente: Math.round(totalCRInadimplente*100)/100, total_recebendo_7d: Math.round(totalCRRecebendo7d*100)/100, saldo_liquido: Math.round(saldoLiquido*100)/100 },\n  inadimplentes: crInadimplentes.sort((a,b) => Number(b.Valor||0) - Number(a.Valor||0)).slice(0,50).map(p => ({ id: p.Id, cliente: p.Cliente||p.NomeCliente||'N/A', valor: Number(p.Valor||0), data_vencimento: (p.DataVencimento||'').split('T')[0], dias_atraso: calcularDiasAtraso(p.DataVencimento||ctx.dataHoje) })),\n  recebendo_7d: crRecebendo7d.sort((a,b) => Number(b.Valor||0) - Number(a.Valor||0)).map(p => ({ id: p.Id, cliente: p.Cliente||p.NomeCliente||'N/A', valor: Number(p.Valor||0), data_vencimento: (p.DataVencimento||'').split('T')[0] })),\n  fluxo_semanal: Object.entries(fluxoCR).sort().map(([semana, total]) => ({ semana, total_entradas: Math.round(total*100)/100 }))\n};\n\nconst fluxoCaixaJSON = {\n  gerado_em: new Date().toISOString(),\n  saldo_liquido_atual: Math.round(saldoLiquido*100)/100,\n  projecao_4_semanas: projecao4Semanas\n};\n\nreturn [{ json: { modulo: 'financeiro', dados: { contasPagar: contasPagarJSON, contasReceber: contasReceberJSON, fluxoCaixa: fluxoCaixaJSON } } }];"
+      },
+      "id": "transformar-financeiro",
+      "name": "🔄 Transformar Financeiro",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1960,
+        660
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "combineAll",
+        "options": {}
+      },
+      "id": "merge-dados",
+      "name": "📥 Merge Dados",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 2.1,
+      "position": [
+        1960,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// SALVAR ARQUIVOS JSON — Gravar em /data/erp/YYYY-MM-DD/\n// ============================================================\nconst fs = require('fs');\nconst path = require('path');\n\nconst hoje = new Date().toISOString().split('T')[0];\nconst baseDir = `/data/erp/${hoje}`;\n\n// Criar diretório se não existir\nfs.mkdirSync(baseDir, { recursive: true });\n\n// Coletar todos os dados dos módulos\nlet vendas = null, estoque = null, contasPagar = null, contasReceber = null, fluxoCaixa = null;\n\nfor (const item of $input.all()) {\n  const { modulo, dados } = item.json;\n  if (modulo === 'vendas') vendas = dados;\n  if (modulo === 'estoque') estoque = dados;\n  if (modulo === 'financeiro') {\n    contasPagar = dados.contasPagar;\n    contasReceber = dados.contasReceber;\n    fluxoCaixa = dados.fluxoCaixa;\n  }\n}\n\n// Salvar arquivos\nconst arquivos = [\n  { nome: 'vendas.json', dados: vendas },\n  { nome: 'estoque.json', dados: estoque },\n  { nome: 'contas-pagar.json', dados: contasPagar },\n  { nome: 'contas-receber.json', dados: contasReceber },\n  { nome: 'fluxo-caixa.json', dados: fluxoCaixa }\n];\n\nconst arquivosSalvos = [];\nfor (const arq of arquivos) {\n  if (arq.dados) {\n    const filePath = path.join(baseDir, arq.nome);\n    fs.writeFileSync(filePath, JSON.stringify(arq.dados, null, 2), 'utf8');\n    arquivosSalvos.push(filePath);\n  }\n}\n\n// Criar/atualizar symlink 'latest' apontando para pasta mais recente\nconst latestPath = '/data/erp/latest';\ntry {\n  if (fs.existsSync(latestPath)) fs.unlinkSync(latestPath);\n  fs.symlinkSync(baseDir, latestPath);\n} catch(e) {\n  // symlink pode falhar em Windows/containers — ignorar\n}\n\nreturn [{\n  json: {\n    sucesso: true,\n    data: hoje,\n    arquivos_salvos: arquivosSalvos,\n    resumo: {\n      receita_total: vendas?.summary?.receita_total || 0,\n      skus_criticos: estoque?.summary?.skus_criticos || 0,\n      inadimplencia: contasReceber?.summary?.total_inadimplente || 0,\n      saldo_liquido: contasReceber?.summary?.saldo_liquido || 0\n    }\n  }\n}];"
+      },
+      "id": "salvar-arquivos",
+      "name": "💾 Salvar JSONs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2200,
+        360
+      ],
+      "notes": "Salva os 5 JSONs em /data/erp/YYYY-MM-DD/ no servidor"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://workflows.tmrodrigues.tech/webhook/dashboard-atualizado",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "sucesso",
+              "value": "=true"
+            },
+            {
+              "name": "data",
+              "value": "={{ $json.data }}"
+            },
+            {
+              "name": "resumo",
+              "value": "={{ JSON.stringify($json.resumo) }}"
+            }
+          ]
+        },
+        "options": {
+          "allowUnauthorizedCerts": false
+        }
+      },
+      "id": "notificar-sucesso",
+      "name": "✅ Notificar Sucesso",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2440,
+        360
+      ],
+      "continueOnFail": true,
+      "notes": "Notifica o dashboard que os dados foram atualizados"
+    },
+    {
+      "parameters": {},
+      "id": "error-trigger",
+      "name": "⚠️ Error Handler",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        2200,
+        580
+      ],
+      "notes": "Captura qualquer erro no workflow principal"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://workflows.tmrodrigues.tech/webhook/alerta-erro",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "erro",
+              "value": "={{ $json.error.message }}"
+            },
+            {
+              "name": "workflow",
+              "value": "Tech Malhas — Coleta ERP Dapic"
+            },
+            {
+              "name": "momento",
+              "value": "={{ new Date().toISOString() }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "notificar-erro",
+      "name": "🚨 Notificar Erro",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2440,
+        580
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "content": "## 🏭 Tech Malhas — Coleta ERP Dapic\n\n**Versão:** 1.0.0 | **Criado por:** Squad N8N\n\n### ⚙️ Configurar antes de ativar:\n1. **N8N Variables** → Criar:\n   - `DAPIC_EMPRESA` = `techmalhasfranca`\n   - `DAPIC_TOKEN_INTEGRACAO` = *(ver credentials.md)*\n2. **Webhook URL** do dashboard: `/webhook/atualizar`\n3. **Pasta de dados**: garantir que `/data/erp/` existe e tem permissão de escrita\n\n### ⏰ Execução automática: todo dia às 06:00\n### 🔄 Execução manual: POST em `/webhook/atualizar`\n\n### Otimizacao Step 04\n- Token obtido uma vez e reutilizado nos branches.\n- Coletas paginadas com RegistrosPorPagina=200.\n- Retry com backoff exponencial para 429/5xx: 1s, 2s, 4s.\n- Renovacao automatica do token em HTTP 401.\n- Fan-out paralelo para Vendas, Estoque, CP e CR.",
+        "height": 280,
+        "width": 420,
+        "color": 4
+      },
+      "id": "nota-config",
+      "name": "📋 Instruções de Configuração",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        240,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "combineAll",
+        "options": {}
+      },
+      "id": "merge-cp-cr",
+      "name": "🔀 Merge CP+CR",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 2.1,
+      "position": [
+        1700,
+        760
+      ]
+    }
+  ],
+  "connections": {
+    "⏰ Cron Diário 06:00": {
+      "main": [
+        [
+          {
+            "node": "📅 Definir Período",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔄 Webhook Manual": {
+      "main": [
+        [
+          {
+            "node": "📅 Definir Período",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📅 Definir Período": {
+      "main": [
+        [
+          {
+            "node": "🔐 Autenticar Dapic",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔐 Autenticar Dapic": {
+      "main": [
+        [
+          {
+            "node": "💾 Preparar Contexto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "💾 Preparar Contexto": {
+      "main": [
+        [
+          {
+            "node": "📊 Coletar Vendas",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "📦 Coletar Estoque",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "💸 Coletar Contas a Pagar",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "💰 Coletar Contas a Receber",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📊 Coletar Vendas": {
+      "main": [
+        [
+          {
+            "node": "🔄 Transformar Vendas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📦 Coletar Estoque": {
+      "main": [
+        [
+          {
+            "node": "🔄 Transformar Estoque",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "💸 Coletar Contas a Pagar": {
+      "main": [
+        [
+          {
+            "node": "🔀 Merge CP+CR",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "💰 Coletar Contas a Receber": {
+      "main": [
+        [
+          {
+            "node": "🔀 Merge CP+CR",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "🔀 Merge CP+CR": {
+      "main": [
+        [
+          {
+            "node": "🔄 Transformar Financeiro",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔄 Transformar Vendas": {
+      "main": [
+        [
+          {
+            "node": "📥 Merge Dados",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔄 Transformar Estoque": {
+      "main": [
+        [
+          {
+            "node": "📥 Merge Dados",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "🔄 Transformar Financeiro": {
+      "main": [
+        [
+          {
+            "node": "📥 Merge Dados",
+            "type": "main",
+            "index": 2
+          }
+        ]
+      ]
+    },
+    "📥 Merge Dados": {
+      "main": [
+        [
+          {
+            "node": "💾 Salvar JSONs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "💾 Salvar JSONs": {
+      "main": [
+        [
+          {
+            "node": "✅ Notificar Sucesso",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "⚠️ Error Handler": {
+      "main": [
+        [
+          {
+            "node": "🚨 Notificar Erro",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "",
+    "timezone": "America/Sao_Paulo"
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "instanceId": "tech-malhas-erp",
+    "optimizedBy": "Otto Otimizador",
+    "optimizedAt": "2026-05-26T14:30:17.579Z",
+    "step": "step-04-otimizacao-workflow"
+  },
+  "tags": [
+    {
+      "name": "erp"
+    },
+    {
+      "name": "dapic"
+    },
+    {
+      "name": "tech-malhas"
+    },
+    {
+      "name": "producao"
+    }
+  ]
+}

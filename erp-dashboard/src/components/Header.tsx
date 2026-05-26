@@ -1,9 +1,11 @@
 import { useState } from 'react'
+import { usePeriod } from '../context/PeriodContext'
+import type { PeriodKey } from '../context/PeriodContext'
 
-const periods = ['7d', '30d', '90d', 'Personalizado']
+const periods: PeriodKey[] = ['7d', '30d', '90d', 'Personalizado']
 
 export default function Header() {
-  const [period, setPeriod] = useState('30d')
+  const { period, setPeriod } = usePeriod()
   const [refreshing, setRefreshing] = useState(false)
 
   async function handleRefresh() {

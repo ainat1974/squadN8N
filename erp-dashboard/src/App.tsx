@@ -6,23 +6,26 @@ import StockPage from './pages/StockPage'
 import FinancialPage from './pages/FinancialPage'
 import PrivateRoute from './components/PrivateRoute'
 import Layout from './components/Layout'
+import { PeriodProvider } from './context/PeriodContext'
 
 export default function App() {
   return (
-    <BrowserRouter>
-      <Routes>
-        <Route path="/login" element={<LoginPage />} />
-        <Route element={<PrivateRoute />}>
-          <Route element={<Layout />}>
-            <Route path="/" element={<Navigate to="/visao-geral" replace />} />
-            <Route path="/visao-geral" element={<OverviewPage />} />
-            <Route path="/vendas" element={<SalesPage />} />
-            <Route path="/estoque" element={<StockPage />} />
-            <Route path="/financeiro" element={<FinancialPage />} />
+    <PeriodProvider>
+      <BrowserRouter>
+        <Routes>
+          <Route path="/login" element={<LoginPage />} />
+          <Route element={<PrivateRoute />}>
+            <Route element={<Layout />}>
+              <Route path="/" element={<Navigate to="/visao-geral" replace />} />
+              <Route path="/visao-geral" element={<OverviewPage />} />
+              <Route path="/vendas" element={<SalesPage />} />
+              <Route path="/estoque" element={<StockPage />} />
+              <Route path="/financeiro" element={<FinancialPage />} />
+            </Route>
           </Route>
-        </Route>
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
-    </BrowserRouter>
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </BrowserRouter>
+    </PeriodProvider>
   )
 }

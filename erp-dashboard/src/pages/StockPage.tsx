@@ -12,7 +12,6 @@ export default function StockPage() {
   const reposicao: any[] = d?.reposicao_urgente || []
   const tendencia: any[] = d?.tendencia_semanal?.slice(0, 10) || []
   const allSaldoDia: any[] = d?.saldo_dia || []
-  const saldoDia: any[] = allSaldoDia.slice(0, 20)
   const totalSkus = summary.total_skus || allSaldoDia.length
 
   if (error) return (

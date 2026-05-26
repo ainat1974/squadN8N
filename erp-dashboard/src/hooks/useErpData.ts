@@ -10,7 +10,7 @@ interface UseErpDataResult<T> {
   refresh: () => void
 }
 
-export function useErpData<T>(fetcher: () => Promise<T>): UseErpDataResult<T> {
+export function useErpData<T>(fetcher: () => Promise<T>, deps: unknown[] = []): UseErpDataResult<T> {
   const [data, setData] = useState<T | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -36,7 +36,7 @@ export function useErpData<T>(fetcher: () => Promise<T>): UseErpDataResult<T> {
       })
 
     return () => { cancelled = true }
-  }, [tick]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [tick, ...deps]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return {
     data,

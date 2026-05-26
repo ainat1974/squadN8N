@@ -3,6 +3,8 @@
 // ============================================================
 import { useErpData } from '../hooks/useErpData'
 import { api, formatBRL, formatNum } from '../services/api'
+import { usePeriod } from '../context/PeriodContext'
+import { filterByRecentDays, periodDays, periodLabel } from '../utils/period'
 import {
   Chart as ChartJS, CategoryScale, LinearScale, BarElement,
   LineElement, PointElement, Title, Tooltip, Legend, ArcElement
@@ -12,11 +14,21 @@ import { Bar, Doughnut } from 'react-chartjs-2'
 ChartJS.register(CategoryScale, LinearScale, BarElement, LineElement, PointElement, Title, Tooltip, Legend, ArcElement)
 
 export default function SalesPage() {
-  const { data, loading, error, refresh } = useErpData(api.vendas)
+  const { period } = usePeriod()
+  const diasPeriodo = periodDays(period)
+  const labelPeriodo = periodLabel(period)
+  const { data, loading, error, refresh } = useErpData(
+    () => api.vendas({ periodo: period, dias: diasPeriodo }),
+    [period],
+  )
   const d = (data as any)?.dados
 
   const summary = d?.summary || {}
-  const evolucao: any[] = d?.evolucao_diaria || []
+  const evolucaoAll: any[] = d?.evolucao_diaria || []
+  const evolucao = filterByRecentDays(evolucaoAll, diasPeriodo, item => item.data)
+  const receitaPeriodo = evolucao.reduce((total: number, item: any) => total + Number(item.receita || 0), 0)
+  const volumePeriodo = evolucao.reduce((total: number, item: any) => total + Number(item.volume || 0), 0)
+  const ticketMedioPeriodo = volumePeriodo > 0 ? receitaPeriodo / volumePeriodo : 0
   const topProdutos: any[] = d?.top_produtos?.slice(0, 10) || []
   const topClientes: any[] = d?.top_clientes?.slice(0, 5) || []
 
@@ -39,17 +51,22 @@ export default function SalesPage() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-xl font-bold text-[#f1f5f9]">Análise de Vendas</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-xl font-bold text-[#f1f5f9]">Análise de Vendas</h1>
+        <span className="text-xs text-[#38bdf8] font-medium bg-[#0f172a] border border-[#334155] px-2 py-1 rounded">
+          Período: {labelPeriodo}
+        </span>
+      </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <StatCard label="Receita Total" value={loading ? '...' : formatBRL(summary.receita_total || 0)} icon="💰" />
-        <StatCard label="Volume de Vendas" value={loading ? '...' : `${formatNum(summary.volume_vendas || 0)} pedidos`} icon="🛒" />
-        <StatCard label="Ticket Médio" value={loading ? '...' : formatBRL(summary.ticket_medio || 0)} icon="📊" />
+        <StatCard label="Receita Total" value={loading ? '...' : formatBRL(receitaPeriodo || summary.receita_total || 0)} icon="💰" />
+        <StatCard label="Volume de Vendas" value={loading ? '...' : `${formatNum(volumePeriodo || summary.volume_vendas || 0)} pedidos`} icon="🛒" />
+        <StatCard label="Ticket Médio" value={loading ? '...' : formatBRL(ticketMedioPeriodo || summary.ticket_medio || 0)} icon="📊" />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <div className="lg:col-span-2 bg-[#1e293b] rounded-xl p-5 border border-[#475569]">
-          <h3 className="text-sm font-medium text-[#94a3b8] mb-4">📈 Evolução de Receita Diária</h3>
+          <h3 className="text-sm font-medium text-[#94a3b8] mb-4">📈 Evolução de Receita Diária ({labelPeriodo})</h3>
           {loading ? <Skeleton height="h-52" /> : evolucao.length > 0 ? (
             <Bar
               data={{
