@@ -11,6 +11,7 @@ if (!apiUrl || !apiKey || apiKey.includes('SEU_N8N')) {
 
 const workflowPath = 'squads/n8n-erp-dashboard/output/workflow-n8n-otimizado.json';
 const workflow = JSON.parse(fs.readFileSync(workflowPath, 'utf8'));
+const credentialsPath = 'squads/n8n-erp-dashboard/_memory/credentials.md';
 
 const headers = {
   'Content-Type': 'application/json',
@@ -40,14 +41,48 @@ async function request(path, options = {}) {
   return body;
 }
 
+function dapicCredentials() {
+  if (!fs.existsSync(credentialsPath)) return null;
+  const credentials = fs.readFileSync(credentialsPath, 'utf8');
+  const empresa = credentials.match(/\*\*Empresa \(Identificador\)\*\*\s*\|\s*`([^`]+)`/)?.[1];
+  const token = credentials.match(/\*\*TokenIntegracao\*\*\s*\|\s*`([^`]+)`/)?.[1];
+  return empresa && token ? { empresa, token } : null;
+}
+
+function injectRuntimeCredentials(nodes) {
+  const creds = dapicCredentials();
+  if (!creds) return nodes;
+
+  return nodes.map(node => {
+    const copy = JSON.parse(JSON.stringify(node));
+
+    if (copy.name === '🔐 Autenticar Dapic') {
+      const params = copy.parameters?.bodyParameters?.parameters || [];
+      for (const param of params) {
+        if (param.name === 'Empresa') param.value = creds.empresa;
+        if (param.name === 'TokenIntegracao') param.value = creds.token;
+      }
+    }
+
+    if (copy.parameters?.jsCode) {
+      copy.parameters.jsCode = copy.parameters.jsCode
+        .replaceAll('$vars.DAPIC_EMPRESA', JSON.stringify(creds.empresa))
+        .replaceAll('$vars.DAPIC_TOKEN_INTEGRACAO', JSON.stringify(creds.token));
+    }
+
+    return copy;
+  });
+}
+
 function workflowPayload() {
-  return {
+  const payload = {
     name: workflow.name,
-    nodes: workflow.nodes,
+    nodes: injectRuntimeCredentials(workflow.nodes),
     connections: workflow.connections,
     settings: workflow.settings || {},
-    staticData: workflow.staticData || null,
   };
+  if (workflow.staticData !== undefined) payload.staticData = workflow.staticData;
+  return payload;
 }
 
 async function listWorkflows() {

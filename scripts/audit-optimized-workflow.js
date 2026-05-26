@@ -19,6 +19,9 @@ const requiredNodes = [
   '✅ Notificar Sucesso',
   '⚠️ Error Handler',
   '🚨 Notificar Erro',
+  '📡 API GET /erp',
+  '📡 Ler Dados ERP',
+  '📡 Responder API',
 ];
 
 const nodeNames = new Set(workflow.nodes.map((node) => node.name));
@@ -70,6 +73,17 @@ if (!workflow.nodes.find((node) => node.name === '✅ Notificar Sucesso')?.conti
 
 if (!workflow.nodes.find((node) => node.name === '🚨 Notificar Erro')?.continueOnFail) {
   throw new Error('Error notification must continue on fail');
+}
+
+const apiWebhookTargets = workflow.connections['📡 API GET /erp']?.main?.[0]?.map((edge) => edge.node) || [];
+if (!apiWebhookTargets.includes('📡 Ler Dados ERP')) {
+  throw new Error('API webhook must connect to static data reader');
+}
+
+const apiResponse = workflow.nodes.find((node) => node.name === '📡 Responder API');
+const headers = apiResponse?.parameters?.options?.responseHeaders?.entries || [];
+if (!headers.some((entry) => entry.name === 'Access-Control-Allow-Origin')) {
+  throw new Error('API response must include CORS headers');
 }
 
 console.log(JSON.stringify({

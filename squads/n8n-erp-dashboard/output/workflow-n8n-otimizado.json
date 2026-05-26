@@ -258,7 +258,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// ============================================================\n// SALVAR ARQUIVOS JSON — Gravar em /data/erp/YYYY-MM-DD/\n// ============================================================\nconst fs = require('fs');\nconst path = require('path');\n\nconst hoje = new Date().toISOString().split('T')[0];\nconst baseDir = `/data/erp/${hoje}`;\n\n// Criar diretório se não existir\nfs.mkdirSync(baseDir, { recursive: true });\n\n// Coletar todos os dados dos módulos\nlet vendas = null, estoque = null, contasPagar = null, contasReceber = null, fluxoCaixa = null;\n\nfor (const item of $input.all()) {\n  const { modulo, dados } = item.json;\n  if (modulo === 'vendas') vendas = dados;\n  if (modulo === 'estoque') estoque = dados;\n  if (modulo === 'financeiro') {\n    contasPagar = dados.contasPagar;\n    contasReceber = dados.contasReceber;\n    fluxoCaixa = dados.fluxoCaixa;\n  }\n}\n\n// Salvar arquivos\nconst arquivos = [\n  { nome: 'vendas.json', dados: vendas },\n  { nome: 'estoque.json', dados: estoque },\n  { nome: 'contas-pagar.json', dados: contasPagar },\n  { nome: 'contas-receber.json', dados: contasReceber },\n  { nome: 'fluxo-caixa.json', dados: fluxoCaixa }\n];\n\nconst arquivosSalvos = [];\nfor (const arq of arquivos) {\n  if (arq.dados) {\n    const filePath = path.join(baseDir, arq.nome);\n    fs.writeFileSync(filePath, JSON.stringify(arq.dados, null, 2), 'utf8');\n    arquivosSalvos.push(filePath);\n  }\n}\n\n// Criar/atualizar symlink 'latest' apontando para pasta mais recente\nconst latestPath = '/data/erp/latest';\ntry {\n  if (fs.existsSync(latestPath)) fs.unlinkSync(latestPath);\n  fs.symlinkSync(baseDir, latestPath);\n} catch(e) {\n  // symlink pode falhar em Windows/containers — ignorar\n}\n\nreturn [{\n  json: {\n    sucesso: true,\n    data: hoje,\n    arquivos_salvos: arquivosSalvos,\n    resumo: {\n      receita_total: vendas?.summary?.receita_total || 0,\n      skus_criticos: estoque?.summary?.skus_criticos || 0,\n      inadimplencia: contasReceber?.summary?.total_inadimplente || 0,\n      saldo_liquido: contasReceber?.summary?.saldo_liquido || 0\n    }\n  }\n}];"
+        "jsCode": "// ============================================================\n// SALVAR JSONs - Armazena em N8N Static Data\n// Disponivel via GET /webhook/erp?modulo=...\n// ============================================================\nconst staticData = $getWorkflowStaticData('global');\n\nlet vendas = null;\nlet estoque = null;\nlet contasPagar = null;\nlet contasReceber = null;\nlet fluxoCaixa = null;\n\nfor (const item of $input.all()) {\n  const { modulo, dados } = item.json;\n  if (modulo === 'vendas') vendas = dados;\n  if (modulo === 'estoque') estoque = dados;\n  if (modulo === 'financeiro') {\n    contasPagar = dados.contasPagar;\n    contasReceber = dados.contasReceber;\n    fluxoCaixa = dados.fluxoCaixa;\n  }\n}\n\nconst hoje = new Date().toISOString().split('T')[0];\n\nstaticData.erp = {\n  atualizadoEm: new Date().toISOString(),\n  data: hoje,\n  vendas,\n  estoque,\n  contasPagar,\n  contasReceber,\n  fluxoCaixa\n};\n\nconst resumo = {\n  receita_total: vendas?.summary?.receita_total || 0,\n  volume_vendas: vendas?.summary?.volume_vendas || 0,\n  ticket_medio: vendas?.summary?.ticket_medio || 0,\n  skus_criticos: estoque?.summary?.skus_criticos || 0,\n  skus_alerta: estoque?.summary?.skus_alerta || 0,\n  valor_total_estoque: estoque?.summary?.valor_total_estoque || 0,\n  total_inadimplente: contasReceber?.summary?.total_inadimplente || 0,\n  saldo_liquido: contasReceber?.summary?.saldo_liquido || 0\n};\n\nreturn [{\n  json: {\n    sucesso: true,\n    data: hoje,\n    atualizadoEm: staticData.erp.atualizadoEm,\n    resumo\n  }\n}];"
       },
       "id": "salvar-arquivos",
       "name": "💾 Salvar JSONs",
@@ -380,6 +380,72 @@
         1700,
         760
       ]
+    },
+    {
+      "id": "api-webhook-erp",
+      "name": "📡 API GET /erp",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [
+        480,
+        720
+      ],
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "erp",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "webhookId": "erp-data-api"
+    },
+    {
+      "id": "api-read-static",
+      "name": "📡 Ler Dados ERP",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        720,
+        720
+      ],
+      "parameters": {
+        "jsCode": "// ============================================================\n// API ERP - Le Static Data e retorna modulo solicitado\n// GET /webhook/erp?modulo=resumo|vendas|estoque|contas-pagar|contas-receber|fluxo-caixa\n// ============================================================\nconst staticData = $getWorkflowStaticData('global');\nconst erp = staticData.erp || {};\nconst query = $input.first().json.query || {};\nconst modulo = String(query.modulo || 'resumo').toLowerCase();\n\nconst mapModulo = {\n  resumo: null,\n  vendas: erp.vendas,\n  estoque: erp.estoque,\n  'contas-pagar': erp.contasPagar,\n  'contas-receber': erp.contasReceber,\n  'fluxo-caixa': erp.fluxoCaixa\n};\n\nif (modulo === 'resumo') {\n  const v = erp.vendas?.summary || {};\n  const e = erp.estoque?.summary || {};\n  const cr = erp.contasReceber?.summary || {};\n  const cp = erp.contasPagar?.summary || {};\n\n  return [{ json: {\n    success: true,\n    atualizadoEm: erp.atualizadoEm || null,\n    data: erp.data || null,\n    receita_total: v.receita_total || 0,\n    volume_vendas: v.volume_vendas || 0,\n    ticket_medio: v.ticket_medio || 0,\n    receita_b2b: v.receita_b2b || 0,\n    receita_pdv: v.receita_pdv || 0,\n    skus_criticos: e.skus_criticos || 0,\n    skus_alerta: e.skus_alerta || 0,\n    valor_total_estoque: e.valor_total_estoque || 0,\n    total_inadimplente: cr.total_inadimplente || 0,\n    saldo_liquido: cr.saldo_liquido || 0,\n    total_pendente_cr: cr.total_pendente || 0,\n    total_pendente_cp: cp.total_pendente || 0,\n    total_vencido_cp: cp.total_vencido || 0\n  }}];\n}\n\nif (!(modulo in mapModulo)) {\n  return [{ json: {\n    success: false,\n    error: 'Modulo invalido: ' + modulo,\n    modulos: Object.keys(mapModulo)\n  }}];\n}\n\nif (!mapModulo[modulo]) {\n  return [{ json: {\n    success: false,\n    error: 'Dados ainda nao coletados para: ' + modulo,\n    atualizadoEm: erp.atualizadoEm || null\n  }}];\n}\n\nreturn [{ json: {\n  success: true,\n  atualizadoEm: erp.atualizadoEm || null,\n  data: erp.data || null,\n  dados: mapModulo[modulo]\n}}];"
+      }
+    },
+    {
+      "id": "api-respond",
+      "name": "📡 Responder API",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        960,
+        720
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Access-Control-Allow-Origin",
+                "value": "*"
+              },
+              {
+                "name": "Access-Control-Allow-Methods",
+                "value": "GET, OPTIONS"
+              },
+              {
+                "name": "Access-Control-Allow-Headers",
+                "value": "Content-Type, Authorization"
+              },
+              {
+                "name": "Cache-Control",
+                "value": "no-cache"
+              }
+            ]
+          }
+        }
+      }
     }
   ],
   "connections": {
@@ -573,6 +639,28 @@
           }
         ]
       ]
+    },
+    "📡 API GET /erp": {
+      "main": [
+        [
+          {
+            "node": "📡 Ler Dados ERP",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📡 Ler Dados ERP": {
+      "main": [
+        [
+          {
+            "node": "📡 Responder API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "active": false,
@@ -588,7 +676,7 @@
     "templateCredsSetupCompleted": false,
     "instanceId": "tech-malhas-erp",
     "optimizedBy": "Otto Otimizador",
-    "optimizedAt": "2026-05-26T14:30:17.579Z",
+    "optimizedAt": "2026-05-26T15:15:01.198Z",
     "step": "step-04-otimizacao-workflow"
   },
   "tags": [

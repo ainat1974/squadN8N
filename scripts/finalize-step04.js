@@ -156,6 +156,190 @@ if (successNode) successNode.continueOnFail = true;
 const errorNode = workflow.nodes.find((node) => node.name === '🚨 Notificar Erro');
 if (errorNode) errorNode.continueOnFail = true;
 
+const saveNode = workflow.nodes.find((node) => node.name === '💾 Salvar JSONs');
+if (saveNode) {
+  saveNode.parameters.jsCode = String.raw`// ============================================================
+// SALVAR JSONs - Armazena em N8N Static Data
+// Disponivel via GET /webhook/erp?modulo=...
+// ============================================================
+const staticData = $getWorkflowStaticData('global');
+
+let vendas = null;
+let estoque = null;
+let contasPagar = null;
+let contasReceber = null;
+let fluxoCaixa = null;
+
+for (const item of $input.all()) {
+  const { modulo, dados } = item.json;
+  if (modulo === 'vendas') vendas = dados;
+  if (modulo === 'estoque') estoque = dados;
+  if (modulo === 'financeiro') {
+    contasPagar = dados.contasPagar;
+    contasReceber = dados.contasReceber;
+    fluxoCaixa = dados.fluxoCaixa;
+  }
+}
+
+const hoje = new Date().toISOString().split('T')[0];
+
+staticData.erp = {
+  atualizadoEm: new Date().toISOString(),
+  data: hoje,
+  vendas,
+  estoque,
+  contasPagar,
+  contasReceber,
+  fluxoCaixa
+};
+
+const resumo = {
+  receita_total: vendas?.summary?.receita_total || 0,
+  volume_vendas: vendas?.summary?.volume_vendas || 0,
+  ticket_medio: vendas?.summary?.ticket_medio || 0,
+  skus_criticos: estoque?.summary?.skus_criticos || 0,
+  skus_alerta: estoque?.summary?.skus_alerta || 0,
+  valor_total_estoque: estoque?.summary?.valor_total_estoque || 0,
+  total_inadimplente: contasReceber?.summary?.total_inadimplente || 0,
+  saldo_liquido: contasReceber?.summary?.saldo_liquido || 0
+};
+
+return [{
+  json: {
+    sucesso: true,
+    data: hoje,
+    atualizadoEm: staticData.erp.atualizadoEm,
+    resumo
+  }
+}];`;
+}
+
+const apiReadCode = String.raw`// ============================================================
+// API ERP - Le Static Data e retorna modulo solicitado
+// GET /webhook/erp?modulo=resumo|vendas|estoque|contas-pagar|contas-receber|fluxo-caixa
+// ============================================================
+const staticData = $getWorkflowStaticData('global');
+const erp = staticData.erp || {};
+const query = $input.first().json.query || {};
+const modulo = String(query.modulo || 'resumo').toLowerCase();
+
+const mapModulo = {
+  resumo: null,
+  vendas: erp.vendas,
+  estoque: erp.estoque,
+  'contas-pagar': erp.contasPagar,
+  'contas-receber': erp.contasReceber,
+  'fluxo-caixa': erp.fluxoCaixa
+};
+
+if (modulo === 'resumo') {
+  const v = erp.vendas?.summary || {};
+  const e = erp.estoque?.summary || {};
+  const cr = erp.contasReceber?.summary || {};
+  const cp = erp.contasPagar?.summary || {};
+
+  return [{ json: {
+    success: true,
+    atualizadoEm: erp.atualizadoEm || null,
+    data: erp.data || null,
+    receita_total: v.receita_total || 0,
+    volume_vendas: v.volume_vendas || 0,
+    ticket_medio: v.ticket_medio || 0,
+    receita_b2b: v.receita_b2b || 0,
+    receita_pdv: v.receita_pdv || 0,
+    skus_criticos: e.skus_criticos || 0,
+    skus_alerta: e.skus_alerta || 0,
+    valor_total_estoque: e.valor_total_estoque || 0,
+    total_inadimplente: cr.total_inadimplente || 0,
+    saldo_liquido: cr.saldo_liquido || 0,
+    total_pendente_cr: cr.total_pendente || 0,
+    total_pendente_cp: cp.total_pendente || 0,
+    total_vencido_cp: cp.total_vencido || 0
+  }}];
+}
+
+if (!(modulo in mapModulo)) {
+  return [{ json: {
+    success: false,
+    error: 'Modulo invalido: ' + modulo,
+    modulos: Object.keys(mapModulo)
+  }}];
+}
+
+if (!mapModulo[modulo]) {
+  return [{ json: {
+    success: false,
+    error: 'Dados ainda nao coletados para: ' + modulo,
+    atualizadoEm: erp.atualizadoEm || null
+  }}];
+}
+
+return [{ json: {
+  success: true,
+  atualizadoEm: erp.atualizadoEm || null,
+  data: erp.data || null,
+  dados: mapModulo[modulo]
+}}];`;
+
+function upsertNode(node) {
+  const index = workflow.nodes.findIndex((candidate) => candidate.name === node.name);
+  if (index >= 0) workflow.nodes[index] = { ...workflow.nodes[index], ...node };
+  else workflow.nodes.push(node);
+}
+
+upsertNode({
+  id: 'api-webhook-erp',
+  name: '📡 API GET /erp',
+  type: 'n8n-nodes-base.webhook',
+  typeVersion: 1.1,
+  position: [480, 720],
+  parameters: {
+    httpMethod: 'GET',
+    path: 'erp',
+    responseMode: 'responseNode',
+    options: {},
+  },
+  webhookId: 'erp-data-api',
+});
+
+upsertNode({
+  id: 'api-read-static',
+  name: '📡 Ler Dados ERP',
+  type: 'n8n-nodes-base.code',
+  typeVersion: 2,
+  position: [720, 720],
+  parameters: { jsCode: apiReadCode },
+});
+
+upsertNode({
+  id: 'api-respond',
+  name: '📡 Responder API',
+  type: 'n8n-nodes-base.respondToWebhook',
+  typeVersion: 1,
+  position: [960, 720],
+  parameters: {
+    respondWith: 'json',
+    responseBody: '={{ $json }}',
+    options: {
+      responseHeaders: {
+        entries: [
+          { name: 'Access-Control-Allow-Origin', value: '*' },
+          { name: 'Access-Control-Allow-Methods', value: 'GET, OPTIONS' },
+          { name: 'Access-Control-Allow-Headers', value: 'Content-Type, Authorization' },
+          { name: 'Cache-Control', value: 'no-cache' },
+        ],
+      },
+    },
+  },
+});
+
+workflow.connections['📡 API GET /erp'] = {
+  main: [[{ node: '📡 Ler Dados ERP', type: 'main', index: 0 }]],
+};
+workflow.connections['📡 Ler Dados ERP'] = {
+  main: [[{ node: '📡 Responder API', type: 'main', index: 0 }]],
+};
+
 const noteNode = workflow.nodes.find((node) => node.name === '📋 Instruções de Configuração');
 if (noteNode) {
   noteNode.parameters.content = `${noteNode.parameters.content}\n\n### Otimizacao Step 04\n- Token obtido uma vez e reutilizado nos branches.\n- Coletas paginadas com RegistrosPorPagina=200.\n- Retry com backoff exponencial para 429/5xx: 1s, 2s, 4s.\n- Renovacao automatica do token em HTTP 401.\n- Fan-out paralelo para Vendas, Estoque, CP e CR.`;
@@ -171,7 +355,7 @@ const report = `# Relatorio de Otimizacao - Otto
 |---|---:|---:|---:|
 | Tempo estimado sequencial | ~28s | n/a | baseline |
 | Tempo estimado com fan-out | ~15s | ~14s | ~50% vs sequencial |
-| Nodes | 20 | 19 | -1 node morto |
+| Nodes | 20 | 22 | + API GET /erp |
 | Auth Dapic | 1 chamada | 1 chamada, com retry 3x | resiliencia |
 | Branches de coleta | 4 branches paralelos | 4 branches paralelos | mantido |
 | Registros por pagina | 200 | 200 | maximo permitido |
@@ -186,7 +370,9 @@ const report = `# Relatorio de Otimizacao - Otto
 4. Paginacao eficiente: todos os loops paginados enviam RegistrosPorPagina=200, reduzindo calls e throughput desperdicado.
 5. Rate limit preservado: cada branch pagina sequencialmente com 650ms entre paginas, mantendo menos de 100 req/min por endpoint.
 6. Node morto removido: Merge Triggers nao estava conectado ao grafo real de execucao. Foi removido do JSON otimizado para reduzir ruido sem alterar comportamento.
-7. Idempotencia preservada: o Load continua sobrescrevendo os arquivos do dia em /data/erp/YYYY-MM-DD/, sem append ou duplicacao.
+7. Load migrado para N8N Static Data: a execucao diaria salva os modulos em \`staticData.erp\`, evitando dependencia de filesystem no container.
+8. API do dashboard adicionada: \`GET /webhook/erp?modulo=...\` retorna resumo, vendas, estoque, contas a pagar, contas a receber e fluxo de caixa com headers CORS.
+9. Idempotencia preservada: cada execucao substitui o snapshot em Static Data, sem append ou duplicacao.
 
 ## Constraints Verificados
 
@@ -198,7 +384,8 @@ const report = `# Relatorio de Otimizacao - Otto
 - [x] Renovacao automatica em 401 sem reiniciar o workflow inteiro.
 - [x] Rate limit estimado: maximo ~92 req/min por endpoint em paginacao continua (650ms entre paginas), abaixo do limite de 100 req/min.
 - [x] Error handling preservado: Error Trigger + Notificar Erro mantidos.
-- [x] Workflow idempotente: saida diaria sobrescreve JSONs do mesmo dia.
+- [x] API GET /erp registrada e com Access-Control-Allow-Origin.
+- [x] Workflow idempotente: saida diaria substitui o snapshot em Static Data.
 
 ## Output
 
