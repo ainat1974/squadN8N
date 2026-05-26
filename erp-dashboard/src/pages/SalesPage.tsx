@@ -20,9 +20,11 @@ export default function SalesPage() {
   const topProdutos: any[] = d?.top_produtos?.slice(0, 10) || []
   const topClientes: any[] = d?.top_clientes?.slice(0, 5) || []
 
-  const chartLabels = evolucao.map((e: any) =>
-    new Date(e.data).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })
-  )
+  const chartLabels = evolucao.map((e: any, i: number) => {
+    if (!e.data) return `Período ${i + 1}`
+    const d = new Date(e.data)
+    return isNaN(d.getTime()) ? e.data : d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })
+  })
 
   const doughnutData = (summary.receita_b2b > 0 || summary.receita_pdv > 0) ? {
     labels: ['PDV', 'B2B'],

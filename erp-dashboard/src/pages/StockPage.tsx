@@ -11,7 +11,9 @@ export default function StockPage() {
   const summary = d?.summary || {}
   const reposicao: any[] = d?.reposicao_urgente || []
   const tendencia: any[] = d?.tendencia_semanal?.slice(0, 10) || []
-  const saldoDia: any[] = d?.saldo_dia?.slice(0, 20) || []
+  const allSaldoDia: any[] = d?.saldo_dia || []
+  const saldoDia: any[] = allSaldoDia.slice(0, 20)
+  const totalSkus = summary.total_skus || allSaldoDia.length
 
   if (error) return (
     <div className="bg-[#7f1d1d] border border-[#ef4444] rounded-xl p-6 text-center">
@@ -37,7 +39,7 @@ export default function StockPage() {
         </div>
         <div className="bg-[#1e293b] rounded-xl p-5 border border-[#475569]">
           <p className="text-[#94a3b8] text-sm mb-1">🏭 Total em Estoque</p>
-          <p className="text-3xl font-bold text-[#22c55e]">{loading ? '...' : formatNum(summary.total_skus || saldoDia.length)}</p>
+          <p className="text-3xl font-bold text-[#22c55e]">{loading ? '...' : formatNum(totalSkus)}</p>
           <p className="text-xs text-[#64748b] mt-1">produtos cadastrados</p>
         </div>
       </div>

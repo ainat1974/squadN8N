@@ -25,9 +25,11 @@ export default function OverviewPage() {
 
   // Dados para gráfico de evolução de receita
   const evolucaoDiaria: any[] = (vendas.data as any)?.dados?.evolucao_diaria || []
-  const chartLabels = evolucaoDiaria.map((e: any) =>
-    new Date(e.data).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })
-  )
+  const chartLabels = evolucaoDiaria.map((e: any, i: number) => {
+    if (!e.data) return `Per.${i + 1}`
+    const d = new Date(e.data)
+    return isNaN(d.getTime()) ? e.data : d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })
+  })
   const chartReceita = evolucaoDiaria.map((e: any) => e.receita || 0)
 
   // Top SKUs para reposição
