@@ -11,6 +11,7 @@ skills:
 
 data:
   - pipeline/data/dapic-api.md
+  - pipeline/data/dashboard-brief.md
   - pipeline/data/research-brief.md
   - pipeline/data/domain-framework.md
   - pipeline/data/quality-criteria.md
