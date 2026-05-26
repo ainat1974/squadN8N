@@ -2,12 +2,10 @@
 // services/api.ts — Serviço de dados ERP via N8N webhooks
 // ============================================================
 
-// URL base: usa VITE_API_URL se apontar para o servidor correto, senão usa o N8N direto
-const RAW_API_URL = import.meta.env.VITE_API_URL || ''
-// Se VITE_API_URL contiver 'workflows.tmrodrigues.tech', usa ele; senão usa o padrão
-const BASE_URL = RAW_API_URL.includes('workflows.tmrodrigues.tech')
-  ? RAW_API_URL.replace(/\/+$/, '')
-  : 'https://workflows.tmrodrigues.tech'
+// URL base: sempre aponta para o webhook N8N direto
+// Ignora VITE_API_URL que pode ter path extra (ex: /api) causando URL errada
+const N8N_HOST = 'https://workflows.tmrodrigues.tech'
+const BASE_URL = N8N_HOST
 
 async function fetchModulo(modulo: string) {
   const res = await fetch(`${BASE_URL}/webhook/erp?modulo=${modulo}`, {
