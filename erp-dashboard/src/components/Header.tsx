@@ -13,7 +13,7 @@ export default function Header() {
     setRefreshing(true)
     try {
       await fetch(webhookUrl, { method: 'POST' })
-    } catch (_) {
+    } catch {
       // silently fail — N8N will retry
     } finally {
       setTimeout(() => setRefreshing(false), 2000)
