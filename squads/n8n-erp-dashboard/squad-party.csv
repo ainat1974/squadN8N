@@ -1,0 +1,8 @@
+id,name,title,icon,execution,path
+artur-api,Artur API,Especialista em Integração de APIs,🔍,subagent,./agents/artur-api.agent.md
+nelson-n8n,Nelson N8N,Arquiteto de Workflows N8N,🔧,subagent,./agents/nelson-n8n.agent.md
+otto-otimizador,Otto Otimizador,Especialista em Otimização de Workflows N8N,⚡,subagent,./agents/otto-otimizador.agent.md
+dante-dados,Dante Dados,Analista e Transformador de Dados,📊,subagent,./agents/dante-dados.agent.md
+diana-design,Diana Design,Designer UI/UX do Dashboard,🎨,subagent,./agents/diana-design.agent.md
+fabio-frontend,Fábio Frontend,Desenvolvedor Full Stack do Dashboard,💻,subagent,./agents/fabio-frontend.agent.md
+renata-revisao,Renata Revisão,Revisora de Qualidade e Arquitetura,✅,inline,./agents/renata-revisao.agent.md

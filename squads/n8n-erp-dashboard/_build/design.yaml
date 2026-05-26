@@ -1,0 +1,195 @@
+squad:
+  code: "n8n-erp-dashboard"
+  name: "N8N ERP Dashboard Squad"
+  description: "Squad de PhDs em automação N8N que coleta dados do ERP Dapic via API, trata os dados e entrega um dashboard web interativo com visão executiva completa."
+
+agents:
+  - id: "artur-api"
+    name: "Artur API"
+    title: "Especialista em Integração de APIs"
+    icon: "🔍"
+    execution: "subagent"
+    role_summary: "Pesquisa, documenta e valida todos os endpoints da API do ERP Dapic necessários para coleta dos relatórios de Vendas, Estoque, Contas a Pagar e Contas a Receber."
+    skills: []
+    tasks:
+      - name: "mapear-endpoints"
+        file: "tasks/mapear-endpoints.md"
+        description: "Mapeia e documenta todos os endpoints relevantes da API Dapic"
+      - name: "validar-autenticacao"
+        file: "tasks/validar-autenticacao.md"
+        description: "Valida método de autenticação, tokens e headers necessários"
+      - name: "documentar-schemas"
+        file: "tasks/documentar-schemas.md"
+        description: "Documenta os schemas de resposta JSON de cada endpoint"
+
+  - id: "nelson-n8n"
+    name: "Nelson N8N"
+    title: "Arquiteto de Workflows N8N"
+    icon: "🔧"
+    execution: "subagent"
+    role_summary: "Projeta e gera o workflow N8N completo para coleta diária agendada dos dados do ERP, com tratamento de erros, retentativas e armazenamento dos dados coletados."
+    skills: []
+    tasks:
+      - name: "projetar-workflow"
+        file: "tasks/projetar-workflow.md"
+        description: "Projeta a arquitetura do workflow N8N com todos os nodes necessários"
+      - name: "gerar-workflow-json"
+        file: "tasks/gerar-workflow-json.md"
+        description: "Gera o JSON completo do workflow para importar no N8N"
+      - name: "configurar-agendamento"
+        file: "tasks/configurar-agendamento.md"
+        description: "Configura o cron scheduler para execução diária"
+
+  - id: "dante-dados"
+    name: "Dante Dados"
+    title: "Analista e Transformador de Dados"
+    icon: "📊"
+    execution: "subagent"
+    role_summary: "Processa, normaliza e estrutura os dados coletados pelo workflow N8N, definindo schemas, transformações e estratégia de armazenamento para alimentar o dashboard."
+    skills: []
+    tasks:
+      - name: "analisar-dados-brutos"
+        file: "tasks/analisar-dados-brutos.md"
+        description: "Analisa a estrutura dos dados retornados pela API Dapic"
+      - name: "projetar-transformacoes"
+        file: "tasks/projetar-transformacoes.md"
+        description: "Projeta as transformações e normalizações necessárias"
+      - name: "definir-schema-armazenamento"
+        file: "tasks/definir-schema-armazenamento.md"
+        description: "Define o schema e estratégia de armazenamento dos dados tratados"
+
+  - id: "diana-design"
+    name: "Diana Design"
+    title: "Designer UI/UX do Dashboard"
+    icon: "🎨"
+    execution: "subagent"
+    role_summary: "Cria a identidade visual, paleta de cores, layout, tipografia e especificação completa do dashboard antes do desenvolvimento, garantindo uma experiência executiva clara e profissional."
+    skills: []
+    tasks:
+      - name: "criar-identidade-visual"
+        file: "tasks/criar-identidade-visual.md"
+        description: "Define paleta de cores, tipografia e design system do dashboard"
+      - name: "projetar-layout"
+        file: "tasks/projetar-layout.md"
+        description: "Projeta o layout dos painéis de Vendas, Estoque, CP e CR"
+      - name: "especificar-componentes"
+        file: "tasks/especificar-componentes.md"
+        description: "Especifica cada componente visual (gráficos, cards, tabelas, filtros)"
+
+  - id: "fabio-frontend"
+    name: "Fábio Frontend"
+    title: "Desenvolvedor Full Stack do Dashboard"
+    icon: "💻"
+    execution: "subagent"
+    role_summary: "Implementa a aplicação web completa com dashboard interativo usando HTML, CSS, JavaScript, React e Node.js, consumindo os dados tratados e respeitando o design da Diana."
+    skills: []
+    tasks:
+      - name: "criar-estrutura-projeto"
+        file: "tasks/criar-estrutura-projeto.md"
+        description: "Cria a estrutura do projeto React com Node.js backend"
+      - name: "implementar-api-backend"
+        file: "tasks/implementar-api-backend.md"
+        description: "Implementa a API backend para servir os dados ao dashboard"
+      - name: "desenvolver-dashboard"
+        file: "tasks/desenvolver-dashboard.md"
+        description: "Desenvolve o dashboard interativo com todos os gráficos e filtros"
+
+  - id: "renata-revisao"
+    name: "Renata Revisão"
+    title: "Revisora de Qualidade e Arquitetura"
+    icon: "✅"
+    execution: "inline"
+    role_summary: "Revisa toda a implementação garantindo qualidade de código, segurança de API, versões estáveis, boas práticas e integração end-to-end funcionando corretamente."
+    skills: []
+    tasks:
+      - name: "revisar-integracao-api"
+        file: "tasks/revisar-integracao-api.md"
+        description: "Revisa segurança e robustez da integração com a API Dapic"
+      - name: "revisar-workflow-n8n"
+        file: "tasks/revisar-workflow-n8n.md"
+        description: "Revisa o workflow N8N quanto a boas práticas e estabilidade"
+      - name: "revisar-dashboard"
+        file: "tasks/revisar-dashboard.md"
+        description: "Revisa o código do dashboard e a experiência do usuário"
+
+pipeline:
+  - step: 1
+    name: "checkpoint-foco-coleta"
+    type: "checkpoint"
+    output_file: "squads/n8n-erp-dashboard/output/foco-coleta.md"
+
+  - step: 2
+    name: "integracao-api-dapic"
+    type: "agent"
+    agent: "artur-api"
+    execution: "subagent"
+    input_file: "squads/n8n-erp-dashboard/output/foco-coleta.md"
+    output_file: "squads/n8n-erp-dashboard/output/api-documentation.md"
+    model_tier: "powerful"
+
+  - step: 3
+    name: "workflow-n8n"
+    type: "agent"
+    agent: "nelson-n8n"
+    execution: "subagent"
+    input_file: "squads/n8n-erp-dashboard/output/api-documentation.md"
+    output_file: "squads/n8n-erp-dashboard/output/workflow-n8n.json"
+    model_tier: "powerful"
+
+  - step: 4
+    name: "checkpoint-aprovacao-workflow"
+    type: "checkpoint"
+
+  - step: 5
+    name: "transformacao-dados"
+    type: "agent"
+    agent: "dante-dados"
+    execution: "subagent"
+    input_file: "squads/n8n-erp-dashboard/output/api-documentation.md"
+    output_file: "squads/n8n-erp-dashboard/output/data-schema.md"
+    model_tier: "powerful"
+
+  - step: 6
+    name: "design-visual"
+    type: "agent"
+    agent: "diana-design"
+    execution: "subagent"
+    input_file: "squads/n8n-erp-dashboard/output/data-schema.md"
+    output_file: "squads/n8n-erp-dashboard/output/design-spec.md"
+    model_tier: "powerful"
+
+  - step: 7
+    name: "checkpoint-aprovacao-design"
+    type: "checkpoint"
+
+  - step: 8
+    name: "desenvolvimento-dashboard"
+    type: "agent"
+    agent: "fabio-frontend"
+    execution: "subagent"
+    input_file: "squads/n8n-erp-dashboard/output/design-spec.md"
+    output_file: "squads/n8n-erp-dashboard/output/dashboard-app.md"
+    model_tier: "powerful"
+
+  - step: 9
+    name: "checkpoint-aprovacao-dashboard"
+    type: "checkpoint"
+
+  - step: 10
+    name: "revisao-qualidade"
+    type: "agent"
+    agent: "renata-revisao"
+    execution: "inline"
+    input_file: "squads/n8n-erp-dashboard/output/dashboard-app.md"
+    output_file: "squads/n8n-erp-dashboard/output/quality-report.md"
+
+skills_installed:
+  - "web_search"
+  - "web_fetch"
+
+best_practices_consulted:
+  - "data-analysis.md"
+  - "technical-writing.md"
+  - "review.md"
+
+template_selection: "skipped"

@@ -1,0 +1,53 @@
+# ─── Credenciais e Segredos ───────────────────────────────────────────────────
+# NUNCA commitar estes arquivos em repo público
+squads/**/_memory/credentials.md
+.env
+.env.local
+.env.*.local
+*.key
+*.pem
+
+# ─── Sessões de Browser (Playwright) ─────────────────────────────────────────
+_opensquad/_browser_profile/
+
+# ─── MCP Config local (contém API keys) ──────────────────────────────────────
+# Use .mcp.example.json como referência
+.mcp.local.json
+
+# ─── Node.js ─────────────────────────────────────────────────────────────────
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ─── Build outputs ───────────────────────────────────────────────────────────
+dist/
+build/
+.next/
+out/
+squads/**/dashboard/dist/
+
+# ─── Dashboard Dev ───────────────────────────────────────────────────────────
+dashboard/.turbo/
+dashboard/node_modules/
+
+# ─── OS ──────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ─── IDEs ────────────────────────────────────────────────────────────────────
+.idea/
+*.swp
+*.swo
+
+# ─── Playwright artefatos locais ──────────────────────────────────────────────
+.playwright-mcp/
+
+# ─── Dados coletados (ficam no servidor N8N, não no repo) ────────────────────
+squads/**/output/data/
+data/erp/
+
+# ─── Logs ─────────────────────────────────────────────────────────────────────
+*.log
+logs/

@@ -1,0 +1,25 @@
+# Company Context
+
+- **Name:** Squad N8N — Automações & Workflows
+- **Website:** https://workflows.tmrodrigues.tech/
+- **Sector:** Tecnologia / Automação de Processos
+- **Description:** Squad especializado em automação de processos empresariais através de Workflows no N8N, com conhecimento profundo em Backend, Frontend, FullStack, Design e integração de APIs. O N8N roda em VPS da Hostinger.
+- **Target Audience:** Empresas que precisam automatizar processos, integrar sistemas e visualizar dados de forma inteligente.
+- **Tone of Voice:** Técnico, preciso e orientado a resultados. Linguagem de especialistas (nível PhD) em automação.
+- **Products/Services:**
+  - Criação de Workflows de automação no N8N
+  - Integração com ERPs e APIs externas
+  - Coleta, tratamento e visualização de dados
+  - Desenvolvimento de dashboards interativos
+  - Automações de Backend, Frontend e FullStack
+- **Social Media:** N/A
+- **Infrastructure:**
+  - N8N: https://workflows.tmrodrigues.tech/ (VPS Hostinger)
+- **Current Project:** Automação de coleta de dados do ERP Dapic (API documentada)
+  - Relatórios: Vendas, Estoque, Contas a Pagar, Contas a Receber
+  - Tratamento e normalização dos dados coletados
+  - Criação de aplicação web com dashboard interativo para visualização dos dados
+- **Dapic ERP (cliente):**
+  - Empresa (Identificador): `techmalhasfranca`
+  - API Docs: https://docs.dapic.app/
+  - Credenciais completas em: `squads/n8n-erp-dashboard/_memory/credentials.md`

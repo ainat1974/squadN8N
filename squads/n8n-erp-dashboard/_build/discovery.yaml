@@ -1,0 +1,28 @@
+squad_code: "n8n-erp-dashboard"
+purpose: "Squad de especialistas (nível PhD) em automação com N8N para coletar dados do ERP Dapic via API (Vendas, Estoque, Contas a Pagar, Contas a Receber), tratar esses dados e criar uma aplicação web com dashboard interativo para visualização."
+domain: "mixed"
+
+company:
+  name: "Squad N8N — Automações & Workflows"
+  tone: "Técnico, preciso e orientado a resultados"
+  products: "Automações N8N, Integração de APIs, Dashboards interativos"
+
+language: "Português (Brasil)"
+
+context:
+  trigger: "Agendamento automático"
+  frequency: "Diário"
+  systems: "ERP Dapic (API documentada), N8N (https://workflows.tmrodrigues.tech/), Aplicação Web com Dashboard"
+  data_sources: "API ERP Dapic — endpoints de Vendas, Estoque, Contas a Pagar, Contas a Receber"
+  decisions: "Desempenho de vendas, fluxo de caixa, controle de estoque, visão executiva consolidada"
+  output_format: "Dashboard interativo web"
+
+tools_needed:
+  - "web_search"
+  - "web_fetch"
+  - "code_execution"
+
+investigation:
+  enabled: false
+
+target_formats: []

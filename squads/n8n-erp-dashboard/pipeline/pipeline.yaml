@@ -1,0 +1,72 @@
+name: "N8N ERP Dashboard — Pipeline Principal"
+squad: "n8n-erp-dashboard"
+version: "1.1.0"
+
+steps:
+  - step: 1
+    file: steps/step-01-checkpoint-foco.md
+    type: checkpoint
+
+  - step: 2
+    file: steps/step-02-integracao-api.md
+    type: agent
+    agent: artur-api
+    execution: subagent
+
+  - step: 3
+    file: steps/step-03-workflow-n8n.md
+    type: agent
+    agent: nelson-n8n
+    execution: subagent
+
+  - step: 4
+    file: steps/step-04-otimizacao-workflow.md
+    type: agent
+    agent: otto-otimizador
+    execution: subagent
+
+  - step: 5
+    file: steps/step-04-checkpoint-workflow.md
+    type: checkpoint
+
+  - step: 6
+    file: steps/step-05-transformacao-dados.md
+    type: agent
+    agent: dante-dados
+    execution: subagent
+
+  - step: 7
+    file: steps/step-06-design-visual.md
+    type: agent
+    agent: diana-design
+    execution: subagent
+
+  - step: 8
+    file: steps/step-07-checkpoint-design.md
+    type: checkpoint
+
+  - step: 9
+    file: steps/step-08-desenvolvimento-dashboard.md
+    type: agent
+    agent: fabio-frontend
+    execution: subagent
+
+  - step: 10
+    file: steps/step-09-checkpoint-dashboard.md
+    type: checkpoint
+
+  - step: 11
+    file: steps/step-10-revisao-qualidade.md
+    type: agent
+    agent: renata-revisao
+    execution: inline
+
+checkpoints:
+  - step: 1
+    name: "Foco da Coleta"
+  - step: 5
+    name: "Aprovação do Workflow N8N (Otimizado)"
+  - step: 8
+    name: "Aprovação do Design Visual"
+  - step: 10
+    name: "Aprovação do Dashboard"
