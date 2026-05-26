@@ -21,9 +21,10 @@
 4. Paginacao eficiente: todos os loops paginados enviam RegistrosPorPagina=200, reduzindo calls e throughput desperdicado.
 5. Rate limit preservado: cada branch pagina sequencialmente com 650ms entre paginas, mantendo menos de 100 req/min por endpoint.
 6. Node morto removido: Merge Triggers nao estava conectado ao grafo real de execucao. Foi removido do JSON otimizado para reduzir ruido sem alterar comportamento.
-7. Load migrado para N8N Static Data: a execucao diaria salva os modulos em `staticData.erp`, evitando dependencia de filesystem no container.
-8. API do dashboard adicionada: `GET /webhook/erp?modulo=...` retorna resumo, vendas, estoque, contas a pagar, contas a receber e fluxo de caixa com headers CORS.
-9. Idempotencia preservada: cada execucao substitui o snapshot em Static Data, sem append ou duplicacao.
+7. Coleta diaria D-1: a execucao das 06:00 calcula `dataColeta` no fuso `America/Sao_Paulo` e consulta somente o dia anterior na Dapic.
+8. Load migrado para N8N Static Data: a execucao diaria salva o snapshot D-1 em `staticData.erp` e alimenta `staticData.erp.historico.diario` para suportar 7d/30d/90d sem janelas longas na API.
+9. API do dashboard adicionada: `GET /webhook/erp?modulo=...` retorna resumo, vendas agregadas por historico diario, estoque, contas a pagar, contas a receber e fluxo de caixa com headers CORS.
+10. Idempotencia preservada: rerodar o mesmo D-1 substitui o registro diario daquela data em Static Data, sem duplicar valores.
 
 ## Constraints Verificados
 
@@ -36,7 +37,7 @@
 - [x] Rate limit estimado: maximo ~92 req/min por endpoint em paginacao continua (650ms entre paginas), abaixo do limite de 100 req/min.
 - [x] Error handling preservado: Error Trigger + Notificar Erro mantidos.
 - [x] API GET /erp registrada e com Access-Control-Allow-Origin.
-- [x] Workflow idempotente: saida diaria substitui o snapshot em Static Data.
+- [x] Workflow idempotente: saida D-1 substitui o registro da mesma data em Static Data.
 
 ## Output
 

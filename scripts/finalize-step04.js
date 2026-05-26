@@ -128,6 +128,19 @@ for (const name of collectNodeNames) {
   node.parameters.jsCode = `${before}${optimizedFetchAllPages}${after}`;
 }
 
+for (const node of workflow.nodes.filter((candidate) => candidate.name.includes('Coletar Contas a Pagar') || candidate.name.includes('Coletar Contas a Receber'))) {
+  if (!node?.parameters?.jsCode) continue;
+
+  node.parameters.jsCode = node.parameters.jsCode
+    .replace(
+      'const { token, dataHoje, data90DiasAtras, dataMais30Dias, baseUrl } = ctx;',
+      'const { token, dataColeta, baseUrl } = ctx;',
+    )
+    .replace('DataInicial: data90DiasAtras,', 'DataInicial: dataColeta,')
+    .replace('DataFinal: dataMais30Dias,', 'DataFinal: dataColeta,')
+    .replace('coletadoEm: new Date().toISOString() } }];', 'dataColeta, coletadoEm: new Date().toISOString() } }];');
+}
+
 const vendasNode = workflow.nodes.find((node) => node.name === '📊 Coletar Vendas');
 if (vendasNode) {
   vendasNode.parameters.jsCode = `// ============================================================
@@ -135,14 +148,14 @@ if (vendasNode) {
 // Endpoints confirmados em api.dapic.com.br
 // ============================================================
 const ctx = $('💾 Preparar Contexto').first().json;
-const { token, dataHoje, data30DiasAtras, baseUrl } = ctx;
+const { token, dataColeta, baseUrl } = ctx;
 
 ${optimizedFetchAllPages}
 
 // 1. Vendas PDV com produtos (endpoint confirmado no workflow validado)
 const vendasPDV = await fetchAllPages.call(this, '/v1/vendaspdv/produtos', {
-  DataInicial: data30DiasAtras,
-  DataFinal: dataHoje,
+  DataInicial: dataColeta,
+  DataFinal: dataColeta,
   FiltrarPor: 0,
   Status: 1
 });
@@ -153,8 +166,8 @@ await sleep(650);
 let pedidosVenda = [];
 try {
   pedidosVenda = await fetchAllPages.call(this, '/v1/pedidosvendas', {
-    DataInicial: data30DiasAtras,
-    DataFinal: dataHoje,
+    DataInicial: dataColeta,
+    DataFinal: dataColeta,
     Status: 5,
     FiltrarPor: 0
   });
@@ -169,7 +182,8 @@ return [{ json: {
   pedidosVenda,
   vendasPDV,
   produtosVendidos,
-  periodoConsultado: data30DiasAtras + ' a ' + dataHoje,
+  dataColeta,
+  periodoConsultado: dataColeta,
   totalRegistros: pedidosVenda.length + vendasPDV.length,
   coletadoEm: new Date().toISOString()
 } }];`.replaceAll('await sleep(650);', 'await sleep(250);');
@@ -182,7 +196,7 @@ if (estoqueNode) {
 // Endpoints confirmados em api.dapic.com.br
 // ============================================================
 const ctx = $('💾 Preparar Contexto').first().json;
-const { token, dataHoje, data30DiasAtras, baseUrl } = ctx;
+const { token, dataColeta, dataHoje, baseUrl } = ctx;
 
 ${optimizedFetchAllPages}
 
@@ -191,40 +205,23 @@ const estoqueAtual = await fetchAllPages.call(this, '/v1/armazenadores/produtos'
   SaldoZerado: true
 });
 
-// 2. Movimentacoes ultimos 30 dias (opcional, pode nao estar habilitado)
+// 2. Movimentacoes do dia anterior (opcional, pode nao estar habilitado)
 await sleep(2000);
-let movimentacoes30d = [];
+let movimentacoesDia = [];
 try {
-  movimentacoes30d = await fetchAllPages.call(this, '/v1/movimentacoesestoque', {
-    DataInicial: data30DiasAtras,
-    DataFinal: dataHoje
+  movimentacoesDia = await fetchAllPages.call(this, '/v1/movimentacoesestoque', {
+    DataInicial: dataColeta,
+    DataFinal: dataColeta
   });
 } catch (error) {
   console.log('Aviso movimentacoes: ' + error.message);
 }
 
-// 3. Movimentacoes semana anterior (opcional)
-const hoje = new Date();
-const inicioSemanaAtual = new Date(hoje);
-inicioSemanaAtual.setDate(hoje.getDate() - hoje.getDay());
-const inicioSemanaAnterior = new Date(inicioSemanaAtual);
-inicioSemanaAnterior.setDate(inicioSemanaAtual.getDate() - 7);
-
-await sleep(2000);
-let movimentacoesSemanaAnterior = [];
-try {
-  movimentacoesSemanaAnterior = await fetchAllPages.call(this, '/v1/movimentacoesestoque', {
-    DataInicial: inicioSemanaAnterior.toISOString().split('T')[0],
-    DataFinal: inicioSemanaAtual.toISOString().split('T')[0]
-  });
-} catch (error) {
-  console.log('Aviso mov. semana anterior: ' + error.message);
-}
-
 return [{ json: {
   estoqueAtual,
-  movimentacoes30d,
-  movimentacoesSemanaAnterior,
+  movimentacoes30d: movimentacoesDia,
+  movimentacoesSemanaAnterior: [],
+  dataColeta,
   coletadoEm: new Date().toISOString()
 } }];`;
 }
@@ -251,20 +248,74 @@ if (manualWebhookNode) {
   manualWebhookNode.parameters.options = manualWebhookNode.parameters.options || {};
 }
 
+const periodNode = workflow.nodes.find((node) => node.name === '📅 Definir Período');
+if (periodNode?.parameters?.assignments?.assignments) {
+  const assignments = periodNode.parameters.assignments.assignments;
+  const upsertAssignment = (assignment) => {
+    const index = assignments.findIndex((item) => item.name === assignment.name);
+    if (index >= 0) assignments[index] = { ...assignments[index], ...assignment };
+    else assignments.push(assignment);
+  };
+
+  upsertAssignment({
+    id: 'data-hoje',
+    name: 'dataHoje',
+    value: "={{ new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date()) }}",
+    type: 'string',
+  });
+  upsertAssignment({
+    id: 'data-coleta-d1',
+    name: 'dataColeta',
+    value: "={{ new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date(Date.now() - 24*60*60*1000)) }}",
+    type: 'string',
+  });
+  upsertAssignment({
+    id: 'janela-coleta',
+    name: 'janelaColeta',
+    value: 'D-1',
+    type: 'string',
+  });
+}
+
 const contextNode = workflow.nodes.find((node) => node.name === '💾 Preparar Contexto');
 if (contextNode?.parameters?.jsCode) {
-  contextNode.parameters.jsCode = contextNode.parameters.jsCode.replace(
-    "baseUrl: 'https://api.dapic.app'",
-    "baseUrl: 'https://api.dapic.com.br'",
-  );
+  contextNode.parameters.jsCode = `// Preparar contexto da execucao com token e datas
+const auth = $('🔐 Autenticar Dapic').first().json;
+const periodo = $('📅 Definir Período').first().json;
+
+if (!auth.access_token) {
+  throw new Error('Falha na autenticacao Dapic: access_token nao retornado');
+}
+
+const dataHoje = periodo.dataHoje;
+const dataColeta = periodo.dataColeta || new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date(Date.now() - 24*60*60*1000));
+
+return [{
+  json: {
+    token: auth.access_token,
+    dataHoje,
+    dataColeta,
+    data30DiasAtras: periodo.data30DiasAtras,
+    data90DiasAtras: periodo.data90DiasAtras,
+    dataMais30Dias: periodo.dataMais30Dias,
+    dataMais7Dias: periodo.dataMais7Dias,
+    janelaColeta: 'D-1',
+    baseUrl: 'https://api.dapic.com.br',
+    iniciadoEm: new Date().toISOString()
+  }
+}];`;
 }
 
 const transformVendasNode = workflow.nodes.find((node) => node.name === '🔄 Transformar Vendas');
 if (transformVendasNode?.parameters?.jsCode) {
   transformVendasNode.parameters.jsCode = transformVendasNode.parameters.jsCode.replace(
     "const data = (item[campoData] || '').split('T')[0];",
-    "const data = String(item[campoData] || item.Data || item.DataVenda || item.DataEmissao || ctx.dataHoje).split('T')[0];",
+    "const data = String(item[campoData] || item.Data || item.DataVenda || item.DataEmissao || ctx.dataColeta || ctx.dataHoje).split('T')[0];",
   );
+  transformVendasNode.parameters.jsCode = transformVendasNode.parameters.jsCode
+    .replace('const hoje = new Date(ctx.dataHoje);', 'const hoje = new Date(ctx.dataColeta || ctx.dataHoje);')
+    .replace('const inicio = new Date(ctx.data30DiasAtras);', 'const inicio = new Date(ctx.dataColeta || ctx.data30DiasAtras);')
+    .replace('periodo: { inicio: ctx.data30DiasAtras, fim: ctx.dataHoje },', 'periodo: { inicio: ctx.dataColeta || ctx.dataHoje, fim: ctx.dataColeta || ctx.dataHoje, tipo: ctx.janelaColeta || "D-1" },');
 }
 
 const successNode = workflow.nodes.find((node) => node.name === '✅ Notificar Sucesso');
@@ -276,8 +327,8 @@ if (errorNode) errorNode.continueOnFail = true;
 const saveNode = workflow.nodes.find((node) => node.name === '💾 Salvar JSONs');
 if (saveNode) {
   saveNode.parameters.jsCode = String.raw`// ============================================================
-// SALVAR JSONs - Acumula modulos no N8N Static Data
-// Funciona com execucoes independentes por branch.
+// SALVAR JSONs - Acumula modulos diarios no N8N Static Data
+// Cada execucao salva o snapshot D-1 e alimenta historico 7/30/90.
 // ============================================================
 const staticData = $getWorkflowStaticData('global');
 
@@ -289,30 +340,63 @@ if (!staticData.erp) {
     estoque: null,
     contasPagar: null,
     contasReceber: null,
+    fluxoCaixa: null,
+    historico: { diario: {} }
+  };
+}
+
+if (!staticData.erp.historico) staticData.erp.historico = { diario: {} };
+if (!staticData.erp.historico.diario) staticData.erp.historico.diario = {};
+
+const item = $input.first().json;
+const { modulo, dados } = item;
+const ctx = $('💾 Preparar Contexto').first().json;
+const hoje = ctx.dataHoje || new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date());
+const dataColeta = ctx.dataColeta || hoje;
+
+if (!staticData.erp.historico.diario[dataColeta]) {
+  staticData.erp.historico.diario[dataColeta] = {
+    data: dataColeta,
+    atualizadoEm: null,
+    vendas: null,
+    estoque: null,
+    contasPagar: null,
+    contasReceber: null,
     fluxoCaixa: null
   };
 }
 
-const item = $input.first().json;
-const { modulo, dados } = item;
-const hoje = new Date().toISOString().split('T')[0];
+const diario = staticData.erp.historico.diario[dataColeta];
 
 if (modulo === 'vendas' && dados) {
   staticData.erp.vendas = dados;
+  diario.vendas = dados;
 }
 
 if (modulo === 'estoque' && dados) {
   staticData.erp.estoque = dados;
+  diario.estoque = dados;
 }
 
 if (modulo === 'financeiro' && dados) {
   staticData.erp.contasPagar = dados.contasPagar || null;
   staticData.erp.contasReceber = dados.contasReceber || null;
   staticData.erp.fluxoCaixa = dados.fluxoCaixa || null;
+  diario.contasPagar = dados.contasPagar || null;
+  diario.contasReceber = dados.contasReceber || null;
+  diario.fluxoCaixa = dados.fluxoCaixa || null;
 }
 
-staticData.erp.data = hoje;
+diario.atualizadoEm = new Date().toISOString();
+staticData.erp.data = dataColeta;
+staticData.erp.dataExecucao = hoje;
 staticData.erp.atualizadoEm = new Date().toISOString();
+
+const datas = Object.keys(staticData.erp.historico.diario).sort();
+while (datas.length > 120) {
+  const antiga = datas.shift();
+  delete staticData.erp.historico.diario[antiga];
+}
 
 const vendas = staticData.erp.vendas;
 const estoque = staticData.erp.estoque;
@@ -334,7 +418,8 @@ return [{
   json: {
     sucesso: true,
     modulo_salvo: modulo,
-    data: hoje,
+    data: dataColeta,
+    janelaColeta: ctx.janelaColeta || 'D-1',
     atualizadoEm: staticData.erp.atualizadoEm,
     resumo,
     modulos: {
@@ -356,10 +441,74 @@ const staticData = $getWorkflowStaticData('global');
 const erp = staticData.erp || {};
 const query = $input.first().json.query || {};
 const modulo = String(query.modulo || 'resumo').toLowerCase();
+const dias = Math.max(1, Math.min(Number(query.dias || 30), 120));
+const diario = erp.historico?.diario || {};
+const datasHistorico = Object.keys(diario).sort();
+const datasPeriodo = datasHistorico.slice(-dias);
+
+function round(value) {
+  return Math.round((Number(value) || 0) * 100) / 100;
+}
+
+function aggregateVendas() {
+  const diasComVendas = datasPeriodo
+    .map(data => ({ data, vendas: diario[data]?.vendas }))
+    .filter(item => item.vendas);
+
+  if (!diasComVendas.length && erp.vendas) {
+    return erp.vendas;
+  }
+
+  const evolucao = [];
+  const produtos = {};
+  let receitaTotal = 0;
+  let volumeTotal = 0;
+  let receitaB2B = 0;
+  let receitaPDV = 0;
+
+  for (const item of diasComVendas) {
+    const vendas = item.vendas;
+    const summary = vendas.summary || {};
+    const receitaDia = Number(summary.receita_total || 0);
+    const volumeDia = Number(summary.volume_vendas || 0);
+
+    receitaTotal += receitaDia;
+    volumeTotal += volumeDia;
+    receitaB2B += Number(summary.receita_b2b || 0);
+    receitaPDV += Number(summary.receita_pdv || 0);
+    evolucao.push({ data: item.data, receita: round(receitaDia), volume: volumeDia });
+
+    for (const produto of vendas.top_produtos || []) {
+      const nome = produto.produto || 'N/A';
+      if (!produtos[nome]) produtos[nome] = { produto: nome, receita: 0, quantidade: 0 };
+      produtos[nome].receita += Number(produto.receita || 0);
+      produtos[nome].quantidade += Number(produto.quantidade || 0);
+    }
+  }
+
+  return {
+    gerado_em: erp.atualizadoEm || new Date().toISOString(),
+    periodo: { inicio: datasPeriodo[0] || erp.data || null, fim: datasPeriodo[datasPeriodo.length - 1] || erp.data || null, dias },
+    summary: {
+      receita_total: round(receitaTotal),
+      volume_vendas: volumeTotal,
+      ticket_medio: volumeTotal > 0 ? round(receitaTotal / volumeTotal) : 0,
+      variacao_mes_anterior_pct: 0,
+      receita_b2b: round(receitaB2B),
+      receita_pdv: round(receitaPDV)
+    },
+    evolucao_diaria: evolucao,
+    top_produtos: Object.values(produtos).sort((a, b) => b.receita - a.receita).slice(0, 10),
+    top_clientes: erp.vendas?.top_clientes || [],
+    por_representante: erp.vendas?.por_representante || []
+  };
+}
+
+const vendasPeriodo = aggregateVendas();
 
 const mapModulo = {
   resumo: null,
-  vendas: erp.vendas,
+  vendas: vendasPeriodo,
   estoque: erp.estoque,
   'contas-pagar': erp.contasPagar,
   'contas-receber': erp.contasReceber,
@@ -367,7 +516,7 @@ const mapModulo = {
 };
 
 if (modulo === 'resumo') {
-  const v = erp.vendas?.summary || {};
+  const v = vendasPeriodo?.summary || {};
   const e = erp.estoque?.summary || {};
   const cr = erp.contasReceber?.summary || {};
   const cp = erp.contasPagar?.summary || {};
@@ -376,6 +525,9 @@ if (modulo === 'resumo') {
     success: true,
     atualizadoEm: erp.atualizadoEm || null,
     data: erp.data || null,
+    dataExecucao: erp.dataExecucao || null,
+    janelaColeta: 'D-1',
+    periodo: { dias, inicio: vendasPeriodo?.periodo?.inicio || null, fim: vendasPeriodo?.periodo?.fim || null },
     receita_total: v.receita_total || 0,
     volume_vendas: v.volume_vendas || 0,
     ticket_medio: v.ticket_medio || 0,
@@ -518,9 +670,10 @@ const report = `# Relatorio de Otimizacao - Otto
 4. Paginacao eficiente: todos os loops paginados enviam RegistrosPorPagina=200, reduzindo calls e throughput desperdicado.
 5. Rate limit preservado: cada branch pagina sequencialmente com 650ms entre paginas, mantendo menos de 100 req/min por endpoint.
 6. Node morto removido: Merge Triggers nao estava conectado ao grafo real de execucao. Foi removido do JSON otimizado para reduzir ruido sem alterar comportamento.
-7. Load migrado para N8N Static Data: a execucao diaria salva os modulos em \`staticData.erp\`, evitando dependencia de filesystem no container.
-8. API do dashboard adicionada: \`GET /webhook/erp?modulo=...\` retorna resumo, vendas, estoque, contas a pagar, contas a receber e fluxo de caixa com headers CORS.
-9. Idempotencia preservada: cada execucao substitui o snapshot em Static Data, sem append ou duplicacao.
+7. Coleta diaria D-1: a execucao das 06:00 calcula \`dataColeta\` no fuso \`America/Sao_Paulo\` e consulta somente o dia anterior na Dapic.
+8. Load migrado para N8N Static Data: a execucao diaria salva o snapshot D-1 em \`staticData.erp\` e alimenta \`staticData.erp.historico.diario\` para suportar 7d/30d/90d sem janelas longas na API.
+9. API do dashboard adicionada: \`GET /webhook/erp?modulo=...\` retorna resumo, vendas agregadas por historico diario, estoque, contas a pagar, contas a receber e fluxo de caixa com headers CORS.
+10. Idempotencia preservada: rerodar o mesmo D-1 substitui o registro diario daquela data em Static Data, sem duplicar valores.
 
 ## Constraints Verificados
 
@@ -533,7 +686,7 @@ const report = `# Relatorio de Otimizacao - Otto
 - [x] Rate limit estimado: maximo ~92 req/min por endpoint em paginacao continua (650ms entre paginas), abaixo do limite de 100 req/min.
 - [x] Error handling preservado: Error Trigger + Notificar Erro mantidos.
 - [x] API GET /erp registrada e com Access-Control-Allow-Origin.
-- [x] Workflow idempotente: saida diaria substitui o snapshot em Static Data.
+- [x] Workflow idempotente: saida D-1 substitui o registro da mesma data em Static Data.
 
 ## Output
 
