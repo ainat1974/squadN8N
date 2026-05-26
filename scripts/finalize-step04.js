@@ -130,13 +130,108 @@ for (const name of collectNodeNames) {
 
 const vendasNode = workflow.nodes.find((node) => node.name === '📊 Coletar Vendas');
 if (vendasNode) {
-  vendasNode.parameters.jsCode = vendasNode.parameters.jsCode
-    .replace('const { token, dataHoje, data30DiasAtras, baseUrl } = ctx;', 'const { token, dataHoje, data90DiasAtras, baseUrl } = ctx;')
-    .replaceAll('DataInicial: data30DiasAtras', 'DataInicial: data90DiasAtras');
+  vendasNode.parameters.jsCode = `// ============================================================
+// COLETAR VENDAS - PDV + Pedidos B2B
+// Endpoints confirmados em api.dapic.com.br
+// ============================================================
+const ctx = $('💾 Preparar Contexto').first().json;
+const { token, dataHoje, data30DiasAtras, baseUrl } = ctx;
+
+${optimizedFetchAllPages}
+
+// 1. Vendas PDV com produtos (endpoint confirmado no workflow validado)
+const vendasPDV = await fetchAllPages.call(this, '/v1/vendaspdv/produtos', {
+  DataInicial: data30DiasAtras,
+  DataFinal: dataHoje,
+  FiltrarPor: 0,
+  Status: 1
+});
+
+await sleep(650);
+
+// 2. Pedidos de Venda B2B (pode retornar vazio/indisponivel conforme ambiente)
+let pedidosVenda = [];
+try {
+  pedidosVenda = await fetchAllPages.call(this, '/v1/pedidosvendas', {
+    DataInicial: data30DiasAtras,
+    DataFinal: dataHoje,
+    Status: 5,
+    FiltrarPor: 0
+  });
+} catch (error) {
+  console.log('Aviso B2B: ' + error.message);
+}
+
+// O endpoint PDV ja retorna produtos; usar como ranking base.
+const produtosVendidos = vendasPDV;
+
+return [{ json: {
+  pedidosVenda,
+  vendasPDV,
+  produtosVendidos,
+  periodoConsultado: data30DiasAtras + ' a ' + dataHoje,
+  totalRegistros: pedidosVenda.length + vendasPDV.length,
+  coletadoEm: new Date().toISOString()
+} }];`.replaceAll('await sleep(650);', 'await sleep(250);');
+}
+
+const estoqueNode = workflow.nodes.find((node) => node.name === '📦 Coletar Estoque');
+if (estoqueNode) {
+  estoqueNode.parameters.jsCode = `// ============================================================
+// COLETAR ESTOQUE - Saldo Atual + Movimentacoes
+// Endpoints confirmados em api.dapic.com.br
+// ============================================================
+const ctx = $('💾 Preparar Contexto').first().json;
+const { token, dataHoje, data30DiasAtras, baseUrl } = ctx;
+
+${optimizedFetchAllPages}
+
+// 1. Estoque atual - endpoint confirmado no workflow validado
+const estoqueAtual = await fetchAllPages.call(this, '/v1/armazenadores/produtos', {
+  SaldoZerado: true
+});
+
+// 2. Movimentacoes ultimos 30 dias (opcional, pode nao estar habilitado)
+await sleep(2000);
+let movimentacoes30d = [];
+try {
+  movimentacoes30d = await fetchAllPages.call(this, '/v1/movimentacoesestoque', {
+    DataInicial: data30DiasAtras,
+    DataFinal: dataHoje
+  });
+} catch (error) {
+  console.log('Aviso movimentacoes: ' + error.message);
+}
+
+// 3. Movimentacoes semana anterior (opcional)
+const hoje = new Date();
+const inicioSemanaAtual = new Date(hoje);
+inicioSemanaAtual.setDate(hoje.getDate() - hoje.getDay());
+const inicioSemanaAnterior = new Date(inicioSemanaAtual);
+inicioSemanaAnterior.setDate(inicioSemanaAtual.getDate() - 7);
+
+await sleep(2000);
+let movimentacoesSemanaAnterior = [];
+try {
+  movimentacoesSemanaAnterior = await fetchAllPages.call(this, '/v1/movimentacoesestoque', {
+    DataInicial: inicioSemanaAnterior.toISOString().split('T')[0],
+    DataFinal: inicioSemanaAtual.toISOString().split('T')[0]
+  });
+} catch (error) {
+  console.log('Aviso mov. semana anterior: ' + error.message);
+}
+
+return [{ json: {
+  estoqueAtual,
+  movimentacoes30d,
+  movimentacoesSemanaAnterior,
+  coletadoEm: new Date().toISOString()
+} }];`;
 }
 
 const authNode = workflow.nodes.find((node) => node.name === '🔐 Autenticar Dapic');
 if (authNode) {
+  authNode.parameters.url = 'https://api.dapic.com.br/autenticacao/v1/login';
   authNode.retryOnFail = true;
   authNode.maxTries = 3;
   authNode.waitBetweenTries = 1000;
@@ -150,6 +245,28 @@ if (authNode) {
   };
 }
 
+const manualWebhookNode = workflow.nodes.find((node) => node.name === '🔄 Webhook Manual');
+if (manualWebhookNode) {
+  manualWebhookNode.parameters.responseMode = 'onReceived';
+  manualWebhookNode.parameters.options = manualWebhookNode.parameters.options || {};
+}
+
+const contextNode = workflow.nodes.find((node) => node.name === '💾 Preparar Contexto');
+if (contextNode?.parameters?.jsCode) {
+  contextNode.parameters.jsCode = contextNode.parameters.jsCode.replace(
+    "baseUrl: 'https://api.dapic.app'",
+    "baseUrl: 'https://api.dapic.com.br'",
+  );
+}
+
+const transformVendasNode = workflow.nodes.find((node) => node.name === '🔄 Transformar Vendas');
+if (transformVendasNode?.parameters?.jsCode) {
+  transformVendasNode.parameters.jsCode = transformVendasNode.parameters.jsCode.replace(
+    "const data = (item[campoData] || '').split('T')[0];",
+    "const data = String(item[campoData] || item.Data || item.DataVenda || item.DataEmissao || ctx.dataHoje).split('T')[0];",
+  );
+}
+
 const successNode = workflow.nodes.find((node) => node.name === '✅ Notificar Sucesso');
 if (successNode) successNode.continueOnFail = true;
 
@@ -159,39 +276,48 @@ if (errorNode) errorNode.continueOnFail = true;
 const saveNode = workflow.nodes.find((node) => node.name === '💾 Salvar JSONs');
 if (saveNode) {
   saveNode.parameters.jsCode = String.raw`// ============================================================
-// SALVAR JSONs - Armazena em N8N Static Data
-// Disponivel via GET /webhook/erp?modulo=...
+// SALVAR JSONs - Acumula modulos no N8N Static Data
+// Funciona com execucoes independentes por branch.
 // ============================================================
 const staticData = $getWorkflowStaticData('global');
 
-let vendas = null;
-let estoque = null;
-let contasPagar = null;
-let contasReceber = null;
-let fluxoCaixa = null;
-
-for (const item of $input.all()) {
-  const { modulo, dados } = item.json;
-  if (modulo === 'vendas') vendas = dados;
-  if (modulo === 'estoque') estoque = dados;
-  if (modulo === 'financeiro') {
-    contasPagar = dados.contasPagar;
-    contasReceber = dados.contasReceber;
-    fluxoCaixa = dados.fluxoCaixa;
-  }
+if (!staticData.erp) {
+  staticData.erp = {
+    atualizadoEm: null,
+    data: null,
+    vendas: null,
+    estoque: null,
+    contasPagar: null,
+    contasReceber: null,
+    fluxoCaixa: null
+  };
 }
 
+const item = $input.first().json;
+const { modulo, dados } = item;
 const hoje = new Date().toISOString().split('T')[0];
 
-staticData.erp = {
-  atualizadoEm: new Date().toISOString(),
-  data: hoje,
-  vendas,
-  estoque,
-  contasPagar,
-  contasReceber,
-  fluxoCaixa
-};
+if (modulo === 'vendas' && dados) {
+  staticData.erp.vendas = dados;
+}
+
+if (modulo === 'estoque' && dados) {
+  staticData.erp.estoque = dados;
+}
+
+if (modulo === 'financeiro' && dados) {
+  staticData.erp.contasPagar = dados.contasPagar || null;
+  staticData.erp.contasReceber = dados.contasReceber || null;
+  staticData.erp.fluxoCaixa = dados.fluxoCaixa || null;
+}
+
+staticData.erp.data = hoje;
+staticData.erp.atualizadoEm = new Date().toISOString();
+
+const vendas = staticData.erp.vendas;
+const estoque = staticData.erp.estoque;
+const contasPagar = staticData.erp.contasPagar;
+const contasReceber = staticData.erp.contasReceber;
 
 const resumo = {
   receita_total: vendas?.summary?.receita_total || 0,
@@ -207,9 +333,17 @@ const resumo = {
 return [{
   json: {
     sucesso: true,
+    modulo_salvo: modulo,
     data: hoje,
     atualizadoEm: staticData.erp.atualizadoEm,
-    resumo
+    resumo,
+    modulos: {
+      vendas: Boolean(vendas),
+      estoque: Boolean(estoque),
+      contasPagar: Boolean(contasPagar),
+      contasReceber: Boolean(contasReceber),
+      fluxoCaixa: Boolean(staticData.erp.fluxoCaixa)
+    }
   }
 }];`;
 }
@@ -339,6 +473,20 @@ workflow.connections['📡 API GET /erp'] = {
 workflow.connections['📡 Ler Dados ERP'] = {
   main: [[{ node: '📡 Responder API', type: 'main', index: 0 }]],
 };
+
+workflow.connections['🔄 Transformar Vendas'] = {
+  main: [[{ node: '💾 Salvar JSONs', type: 'main', index: 0 }]],
+};
+workflow.connections['🔄 Transformar Estoque'] = {
+  main: [[{ node: '💾 Salvar JSONs', type: 'main', index: 0 }]],
+};
+workflow.connections['💰 Coletar Contas a Receber'] = {
+  main: [[{ node: '🔄 Transformar Financeiro', type: 'main', index: 0 }]],
+};
+workflow.connections['🔄 Transformar Financeiro'] = {
+  main: [[{ node: '💾 Salvar JSONs', type: 'main', index: 0 }]],
+};
+delete workflow.connections['📥 Merge Dados'];
 
 const noteNode = workflow.nodes.find((node) => node.name === '📋 Instruções de Configuração');
 if (noteNode) {
