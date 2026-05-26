@@ -1,281 +1,186 @@
-// ============================================================
-// OverviewPage.tsx — Visão Geral Executiva com dados reais
-// ============================================================
+import { Bar, Line } from 'react-chartjs-2'
+import {
+  Chart as ChartJS, CategoryScale, LinearScale, BarElement,
+  LineElement, PointElement, Tooltip, Legend, Filler
+} from 'chart.js'
 import { useErpData } from '../hooks/useErpData'
 import { api, formatBRL, formatDate, formatNum } from '../services/api'
 import { usePeriod } from '../context/PeriodContext'
-import { filterByRecentDays, periodDays, periodLabel } from '../utils/period'
-import {
-  Chart as ChartJS, CategoryScale, LinearScale, BarElement,
-  LineElement, PointElement, Title, Tooltip, Legend, Filler
-} from 'chart.js'
-import { Bar, Line } from 'react-chartjs-2'
+import { periodDays, periodLabel } from '../utils/period'
+import { EmptyState, LoadingBlock, MetricCard, PageHeader, Panel, StatusPill } from '../components/DashboardPrimitives'
 
-ChartJS.register(
-  CategoryScale, LinearScale, BarElement,
-  LineElement, PointElement, Title, Tooltip, Legend, Filler
-)
+ChartJS.register(CategoryScale, LinearScale, BarElement, LineElement, PointElement, Tooltip, Legend, Filler)
+
+const chartBase = {
+  responsive: true,
+  maintainAspectRatio: false,
+  plugins: { legend: { display: false } },
+  scales: {
+    x: { ticks: { color: '#747474', font: { size: 11 } }, grid: { color: 'rgba(255,255,255,.06)' } },
+    y: { ticks: { color: '#747474', font: { size: 11 } }, grid: { color: 'rgba(255,255,255,.06)' } },
+  },
+}
 
 export default function OverviewPage() {
   const { period } = usePeriod()
   const diasPeriodo = periodDays(period)
-  const periodoLabel = periodLabel(period)
   const requestOptions = { periodo: period, dias: diasPeriodo }
 
   const resumo = useErpData(() => api.resumo(requestOptions), [period])
   const vendas = useErpData(() => api.vendas(requestOptions), [period])
   const estoque = useErpData(() => api.estoque(requestOptions), [period])
-  const financeiro = useErpData(() => api.contasReceber(requestOptions), [period])
+  const contasReceber = useErpData(() => api.contasReceber(requestOptions), [period])
   const fluxoCaixa = useErpData(() => api.fluxoCaixa(requestOptions), [period])
 
-  const d = resumo.data as any
-  const atualizadoEm = d?.atualizadoEm ? formatDate(d.atualizadoEm) : null
-
-  const evolucaoDiariaAll: any[] = (vendas.data as any)?.dados?.evolucao_diaria || []
-  const evolucaoDiaria = filterByRecentDays(evolucaoDiariaAll, diasPeriodo, item => item.data)
-  const receitaPeriodo = evolucaoDiaria.reduce((total: number, item: any) => total + Number(item.receita || 0), 0)
-  const volumePeriodo = evolucaoDiaria.reduce((total: number, item: any) => total + Number(item.volume || 0), 0)
-
-  const chartLabels = evolucaoDiaria.map((e: any, i: number) => {
-    if (!e.data) return `Per.${i + 1}`
-    const dt = new Date(e.data)
-    return isNaN(dt.getTime()) ? e.data : dt.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })
-  })
-  const chartReceita = evolucaoDiaria.map((e: any) => e.receita || 0)
-
-  // ── Estoque: críticos, alerta e top 5 baixo estoque ───────
+  const r = resumo.data as any
+  const vendasData = (vendas.data as any)?.dados
   const estoqueData = (estoque.data as any)?.dados
-  const estoqueSummary = estoqueData?.summary || {}
-  const reposicaoUrgente: any[] = estoqueData?.reposicao_urgente || []
+  const crData = (contasReceber.data as any)?.dados
+  const fluxoData = (fluxoCaixa.data as any)?.dados
+
+  const evolucao: any[] = vendasData?.evolucao_diaria || []
+  const chartLabels = evolucao.map(item => formatDate(item.data))
+  const chartValues = evolucao.map(item => Number(item.receita || 0))
+  const fluxo = fluxoData?.projecao_4_semanas || []
   const saldoDia: any[] = estoqueData?.saldo_dia || []
-
-  // Se não há reposicao_urgente com dados de velocidade, usa os 5 produtos
-  // com menor estoque_atual como proxy de "atenção"
-  const proxyBaixoEstoque: any[] = saldoDia
-    .filter((item: any) => item.estoque_atual > 0)
-    .sort((a: any, b: any) => a.estoque_atual - b.estoque_atual)
+  const baixoEstoque = saldoDia
+    .filter(item => Number(item.estoque_atual || 0) > 0)
+    .sort((a, b) => Number(a.estoque_atual || 0) - Number(b.estoque_atual || 0))
     .slice(0, 5)
+  const recebendo7d: any[] = crData?.recebendo_7d?.slice(0, 5) || []
 
-  const reposicao = reposicaoUrgente.length > 0
-    ? reposicaoUrgente.slice(0, 5)
-    : proxyBaixoEstoque
-
-  const usandoProxy = reposicaoUrgente.length === 0 && proxyBaixoEstoque.length > 0
-
-  // ── Vencimentos próximos (CR) ──────────────────────────────
-  const recebendo7d: any[] = (financeiro.data as any)?.dados?.recebendo_7d?.slice(0, 5) || []
-
-  // ── Fluxo de caixa ─────────────────────────────────────────
-  const projecao: any[] = (fluxoCaixa.data as any)?.dados?.projecao_4_semanas || []
-  const fluxoLabels = projecao.map((p: any) => p.semana)
-  const fluxoEntradas = projecao.map((p: any) => p.entradas_previstas)
-  const fluxoSaidas = projecao.map((p: any) => p.saidas_previstas)
-
-  const isLoading = resumo.loading || vendas.loading || estoque.loading
-  const hasError = resumo.error && vendas.error
+  const partialErrors = [resumo.error, vendas.error, estoque.error, contasReceber.error, fluxoCaixa.error].filter(Boolean)
+  const loading = resumo.loading || vendas.loading
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-bold text-[#f1f5f9]">Visão Geral Executiva</h1>
-        <div className="flex items-center gap-3">
-          <span className="text-xs text-[#38bdf8] font-medium bg-[#0f172a] border border-[#334155] px-2 py-1 rounded">
-            Período: {periodoLabel}
-          </span>
-          {atualizadoEm && (
-            <span className="text-xs text-[#64748b]">Atualizado em {atualizadoEm}</span>
-          )}
-        </div>
-      </div>
+    <div className="pb-20 md:pb-0">
+      <PageHeader
+        eyebrow="ERP Dapic / Command Center"
+        title="Visao Geral Executiva"
+        description="Demonstracao consolidada dos dados coletados no D-1. Vendas podem ser agregadas por periodo; estoque e financeiro representam o snapshot da ultima coleta diaria."
+        meta={
+          <>
+            <StatusPill tone="orange">{periodLabel(period)}</StatusPill>
+            {r?.data && <StatusPill tone="muted">Base {formatDate(r.data)}</StatusPill>}
+            {partialErrors.length > 0 && <StatusPill tone="red">{partialErrors.length} alerta(s)</StatusPill>}
+          </>
+        }
+      />
 
-      {hasError && (
-        <div className="bg-[#7f1d1d] border border-[#ef4444] rounded-xl p-4 text-sm text-[#fca5a5]">
-          ⚠️ Dados ainda não disponíveis. Execute o workflow N8N para coletar os dados do ERP.
-          <br /><span className="text-xs opacity-70">Erro: {resumo.error}</span>
-        </div>
+      {partialErrors.length > 0 && (
+        <Panel title="Alertas de dados" subtitle="Alguns modulos retornaram erro ou ainda nao foram coletados." className="mb-4">
+          <div className="p-4 text-sm text-[var(--text-secondary)]">
+            {partialErrors.map((error, index) => <p key={index} className="m-0 py-1">{error}</p>)}
+          </div>
+        </Panel>
       )}
 
-      {/* KPI Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-        <KPICard
-          icon="💰" label="Receita do Período"
-          value={isLoading ? '...' : formatBRL(receitaPeriodo || d?.receita_total || 0)}
-          sub={d || evolucaoDiaria.length > 0 ? `${formatNum(volumePeriodo || d?.volume_vendas || 0)} vendas · ${periodoLabel}` : null}
-          color="success"
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <MetricCard
+          label="Receita no periodo"
+          value={loading ? '...' : formatBRL(r?.receita_total || 0)}
+          detail={`${formatNum(r?.volume_vendas || 0)} vendas coletadas`}
+          tone="orange"
         />
-        <KPICard
-          icon="📊" label="Saldo Líquido CR/CP"
-          value={isLoading ? '...' : formatBRL(d?.saldo_liquido || 0)}
-          sub={d?.saldo_liquido >= 0 ? 'Positivo ✅' : 'Negativo ⚠️'}
-          color={d?.saldo_liquido >= 0 ? 'accent' : 'warning'}
+        <MetricCard
+          label="Ticket medio"
+          value={loading ? '...' : formatBRL(r?.ticket_medio || 0)}
+          detail={`PDV ${formatBRL(r?.receita_pdv || 0)}`}
+          tone="green"
         />
-        <KPICard
-          icon="📦" label="Estoque Crítico"
-          value={isLoading ? '...' : `${formatNum(estoqueSummary.skus_criticos || d?.skus_criticos || 0)} SKUs`}
-          sub={
-            isLoading ? null :
-            (() => {
-              const total = estoqueSummary.total_skus || saldoDia.length || 0
-              const alerta = estoqueSummary.skus_alerta || d?.skus_alerta || 0
-              const criticos = estoqueSummary.skus_criticos || d?.skus_criticos || 0
-              if (total > 0 && criticos === 0) return `${formatNum(alerta)} em alerta · ${formatNum(total)} total`
-              return `${formatNum(alerta)} em alerta · ${formatNum(total)} total`
-            })()
-          }
-          color="warning"
+        <MetricCard
+          label="Estoque monitorado"
+          value={estoque.loading ? '...' : formatNum(estoqueData?.summary?.total_skus || saldoDia.length || 0)}
+          detail={`${formatNum(r?.skus_criticos || 0)} criticos / ${formatNum(r?.skus_alerta || 0)} alerta`}
+          tone="blue"
         />
-        <KPICard
-          icon="⚠️" label="Inadimplência CR"
-          value={isLoading ? '...' : formatBRL(d?.total_inadimplente || 0)}
-          sub={d ? `Total CR: ${formatBRL(d.total_pendente_cr || 0)}` : null}
-          color="danger"
+        <MetricCard
+          label="Saldo CR - CP"
+          value={resumo.loading ? '...' : formatBRL(r?.saldo_liquido || 0)}
+          detail={r?.data ? `Snapshot ${formatDate(r.data)}` : 'Aguardando coleta'}
+          tone={(r?.saldo_liquido || 0) >= 0 ? 'green' : 'red'}
         />
       </div>
 
-      {/* Gráficos */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {/* Evolução de Receita */}
-        <div className="bg-[#1e293b] rounded-xl p-5 border border-[#475569]">
-          <h3 className="text-sm font-medium text-[#94a3b8] mb-4">
-            📈 Evolução de Receita ({periodoLabel})
-          </h3>
-          {vendas.loading ? (
-            <Skeleton height="h-40" />
-          ) : evolucaoDiaria.length > 0 ? (
-            <Line
-              data={{
-                labels: chartLabels,
-                datasets: [{
-                  label: 'Receita (R$)',
-                  data: chartReceita,
-                  borderColor: '#22c55e',
-                  backgroundColor: 'rgba(34,197,94,0.08)',
-                  fill: true,
-                  tension: 0.3,
-                  pointRadius: 3,
-                }]
-              }}
-              options={{
-                responsive: true,
-                plugins: { legend: { display: false } },
-                scales: {
-                  x: { ticks: { color: '#64748b', font: { size: 11 } }, grid: { color: '#1e293b' } },
-                  y: { ticks: { color: '#64748b', font: { size: 11 }, callback: (v: any) => `R$ ${(v/1000).toFixed(0)}k` }, grid: { color: '#334155' } }
-                }
-              }}
-            />
-          ) : <EmptyChart msg="Sem dados de vendas" />}
-        </div>
+      <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-2">
+        <Panel title="Evolucao de receita" subtitle={`Serie agregada: ${periodLabel(period)}`}>
+          <div className="h-72 p-4">
+            {vendas.loading ? <LoadingBlock height="h-full" /> : evolucao.length > 0 ? (
+              <Line
+                data={{
+                  labels: chartLabels,
+                  datasets: [{
+                    data: chartValues,
+                    borderColor: '#ff7a2f',
+                    backgroundColor: 'rgba(255, 122, 47, 0.14)',
+                    fill: true,
+                    tension: 0.35,
+                    pointBackgroundColor: '#ff7a2f',
+                    pointRadius: 4,
+                  }],
+                }}
+                options={chartBase as any}
+              />
+            ) : <EmptyState title="Sem serie de vendas" detail="O historico D-1 sera acumulado a cada execucao diaria." />}
+          </div>
+        </Panel>
 
-        {/* Fluxo de Caixa */}
-        <div className="bg-[#1e293b] rounded-xl p-5 border border-[#475569]">
-          <h3 className="text-sm font-medium text-[#94a3b8] mb-4">💸 Fluxo de Caixa (próximas 4 semanas)</h3>
-          {fluxoCaixa.loading ? (
-            <Skeleton height="h-40" />
-          ) : projecao.length > 0 ? (
-            <Bar
-              data={{
-                labels: fluxoLabels,
-                datasets: [
-                  { label: 'Entradas', data: fluxoEntradas, backgroundColor: 'rgba(34,197,94,0.7)', borderRadius: 4 },
-                  { label: 'Saídas', data: fluxoSaidas, backgroundColor: 'rgba(239,68,68,0.7)', borderRadius: 4 },
-                ]
-              }}
-              options={{
-                responsive: true,
-                plugins: { legend: { labels: { color: '#94a3b8', font: { size: 11 } } } },
-                scales: {
-                  x: { ticks: { color: '#64748b', font: { size: 10 } }, grid: { color: '#334155' } },
-                  y: { ticks: { color: '#64748b', font: { size: 11 }, callback: (v: any) => `R$${(v/1000).toFixed(0)}k` }, grid: { color: '#334155' } }
-                }
-              }}
-            />
-          ) : <EmptyChart msg="Sem dados financeiros" />}
-        </div>
+        <Panel title="Fluxo financeiro" subtitle="Resultado dos registros financeiros coletados">
+          <div className="h-72 p-4">
+            {fluxoCaixa.loading ? <LoadingBlock height="h-full" /> : fluxo.length > 0 ? (
+              <Bar
+                data={{
+                  labels: fluxo.map((item: any) => item.semana),
+                  datasets: [
+                    { label: 'Entradas', data: fluxo.map((item: any) => item.entradas_previstas), backgroundColor: '#42d392', borderRadius: 4 },
+                    { label: 'Saidas', data: fluxo.map((item: any) => item.saidas_previstas), backgroundColor: '#ff5f57', borderRadius: 4 },
+                  ],
+                }}
+                options={{ ...chartBase, plugins: { legend: { labels: { color: '#b7b7b7' } } } } as any}
+              />
+            ) : <EmptyState title="Sem movimentacao financeira no D-1" detail="A coleta funcionou, mas nao retornou parcelas financeiras para demonstrar fluxo." />}
+          </div>
+        </Panel>
       </div>
 
-      {/* Alertas Rápidos */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {/* Top 5 SKUs para Reposição / Menor Estoque */}
-        <div className="bg-[#1e293b] rounded-xl p-5 border border-[#475569]">
-          <h3 className="text-sm font-medium text-[#94a3b8] mb-1">
-            {usandoProxy ? '⚠️ Top 5 SKUs com Menor Estoque' : '🔴 Top 5 SKUs para Reposição'}
-          </h3>
-          {usandoProxy && (
-            <p className="text-xs text-[#64748b] mb-3">
-              Análise de velocidade indisponível — exibindo produtos com menor saldo atual
-            </p>
-          )}
-          {estoque.loading ? <Skeleton /> : reposicao.length > 0 ? (
-            <ul className="space-y-2">
-              {reposicao.map((item: any, i: number) => (
-                <li key={i} className="flex items-center justify-between text-sm">
-                  <span className="text-[#cbd5e1] truncate max-w-[60%]">
-                    {item.produto || item.descricao || 'Produto ' + (i + 1)}
-                  </span>
-                  {usandoProxy ? (
-                    <span className="font-medium text-xs px-2 py-1 rounded-full bg-blue-900 text-blue-300">
-                      {formatNum(item.estoque_atual)} un
-                    </span>
-                  ) : (
-                    <span className={`font-medium text-xs px-2 py-1 rounded-full ${
-                      item.urgencia === 'CRITICO' ? 'bg-red-900 text-red-300' : 'bg-yellow-900 text-yellow-300'
-                    }`}>
-                      {item.dias_ate_zerar}d — {item.urgencia}
-                    </span>
-                  )}
-                </li>
-              ))}
-            </ul>
-          ) : <EmptyList msg="Nenhum dado de estoque disponível" />}
-        </div>
+      <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-2">
+        <Panel title="Estoque em atencao" subtitle="Menores saldos do snapshot D-1">
+          <div className="p-4">
+            {estoque.loading ? <LoadingBlock /> : baixoEstoque.length > 0 ? (
+              <table className="data-table">
+                <thead><tr><th>Produto</th><th className="text-right">Saldo</th></tr></thead>
+                <tbody>
+                  {baixoEstoque.map((item, index) => (
+                    <tr key={`${item.codigo}-${index}`}>
+                      <td className="max-w-[320px] truncate">{item.produto}</td>
+                      <td className="text-right font-bold text-[var(--accent)]">{formatNum(item.estoque_atual)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : <EmptyState title="Sem estoque para listar" detail="O modulo de estoque ainda nao retornou saldos demonstraveis." />}
+          </div>
+        </Panel>
 
-        {/* Vencimentos em 7 dias */}
-        <div className="bg-[#1e293b] rounded-xl p-5 border border-[#475569]">
-          <h3 className="text-sm font-medium text-[#94a3b8] mb-4">⏰ CR — Recebendo nos Próximos 7 Dias</h3>
-          {financeiro.loading ? <Skeleton /> : recebendo7d.length > 0 ? (
-            <ul className="space-y-2">
-              {recebendo7d.map((item: any, i: number) => (
-                <li key={i} className="flex items-center justify-between text-sm">
-                  <span className="text-[#cbd5e1] truncate max-w-[55%]">{item.cliente || 'N/A'}</span>
-                  <span className="text-[#22c55e] font-medium">{formatBRL(item.valor)}</span>
-                </li>
-              ))}
-            </ul>
-          ) : <EmptyList msg="Nenhum recebimento em 7 dias" />}
-        </div>
+        <Panel title="Recebimentos proximos" subtitle="CR retornado na ultima coleta">
+          <div className="p-4">
+            {contasReceber.loading ? <LoadingBlock /> : recebendo7d.length > 0 ? (
+              <table className="data-table">
+                <thead><tr><th>Cliente</th><th className="text-right">Valor</th></tr></thead>
+                <tbody>
+                  {recebendo7d.map((item, index) => (
+                    <tr key={`${item.id}-${index}`}>
+                      <td className="max-w-[320px] truncate">{item.cliente || 'Cliente nao informado'}</td>
+                      <td className="text-right font-bold text-[var(--success)]">{formatBRL(item.valor)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : <EmptyState title="Sem recebimentos no D-1" detail="Isso indica ausencia de registros financeiros retornados para a data coletada, nao falha visual." />}
+          </div>
+        </Panel>
       </div>
     </div>
   )
 }
 
-function KPICard({ icon, label, value, sub, color }: {
-  icon: string; label: string; value: string; sub: string | null; color: string
-}) {
-  const colorMap: Record<string, string> = {
-    success: 'text-[#22c55e]', accent: 'text-[#38bdf8]',
-    warning: 'text-[#f59e0b]', danger: 'text-[#ef4444]',
-  }
-  return (
-    <div className="bg-[#1e293b] rounded-xl p-5 border border-[#475569]">
-      <div className="flex items-center gap-2 mb-3">
-        <span className="text-lg">{icon}</span>
-        <span className="text-[#94a3b8] text-sm">{label}</span>
-      </div>
-      <p className={`text-2xl font-bold ${colorMap[color]}`}>{value}</p>
-      {sub && <p className="text-xs text-[#64748b] mt-1">{sub}</p>}
-    </div>
-  )
-}
-
-function Skeleton({ height = 'h-24' }: { height?: string }) {
-  return <div className={`${height} bg-[#334155] rounded-lg animate-pulse`} />
-}
-
-function EmptyChart({ msg }: { msg: string }) {
-  return <div className="h-40 flex items-center justify-center text-[#475569] text-sm">{msg}</div>
-}
-
-function EmptyList({ msg }: { msg: string }) {
-  return <div className="text-[#475569] text-sm text-center py-6">{msg}</div>
-}

@@ -1,11 +1,12 @@
 import type { PeriodKey } from '../context/PeriodContext'
 
 export function periodLabel(period: PeriodKey) {
-  return period === 'Personalizado' ? '30d' : period
+  return period === '1d' ? 'D-1' : period
 }
 
 export function periodDays(period: PeriodKey) {
   if (period === '7d') return 7
+  if (period === '1d') return 1
   if (period === '90d') return 90
   return 30
 }

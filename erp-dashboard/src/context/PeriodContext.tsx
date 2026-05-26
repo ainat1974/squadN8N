@@ -4,14 +4,13 @@
 // ============================================================
 import { createContext, useContext, useState } from 'react'
 
-export type PeriodKey = '1d' | '7d' | '30d' | '90d' | 'Personalizado'
+export type PeriodKey = '1d' | '7d' | '30d' | '90d'
 
 export const PERIOD_DAYS: Record<PeriodKey, number> = {
   '1d': 1,
   '7d': 7,
   '30d': 30,
   '90d': 90,
-  'Personalizado': 30,
 }
 
 interface PeriodContextType {
@@ -21,13 +20,13 @@ interface PeriodContextType {
 }
 
 const PeriodContext = createContext<PeriodContextType>({
-  period: '30d',
+  period: '1d',
   setPeriod: () => {},
-  days: 30,
+  days: 1,
 })
 
 export function PeriodProvider({ children }: { children: React.ReactNode }) {
-  const [period, setPeriod] = useState<PeriodKey>('30d')
+  const [period, setPeriod] = useState<PeriodKey>('1d')
   return (
     <PeriodContext.Provider value={{ period, setPeriod, days: PERIOD_DAYS[period] }}>
       {children}

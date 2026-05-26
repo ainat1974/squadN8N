@@ -1,14 +1,10 @@
-// ============================================================
-// FinancialPage.tsx — Contas a Pagar/Receber com dados reais
-// ============================================================
+import { Bar } from 'react-chartjs-2'
+import { Chart as ChartJS, CategoryScale, LinearScale, BarElement, Tooltip, Legend } from 'chart.js'
 import { useErpData } from '../hooks/useErpData'
 import { api, formatBRL, formatDate } from '../services/api'
-import {
-  Chart as ChartJS, CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend
-} from 'chart.js'
-import { Bar } from 'react-chartjs-2'
+import { EmptyState, LoadingBlock, MetricCard, PageHeader, Panel, StatusPill } from '../components/DashboardPrimitives'
 
-ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend)
+ChartJS.register(CategoryScale, LinearScale, BarElement, Tooltip, Legend)
 
 export default function FinancialPage() {
   const cp = useErpData(api.contasPagar)
@@ -18,122 +14,141 @@ export default function FinancialPage() {
   const cpData = (cp.data as any)?.dados
   const crData = (cr.data as any)?.dados
   const fcData = (fc.data as any)?.dados
-
   const projecao: any[] = fcData?.projecao_4_semanas || []
-
+  const errors = [cp.error, cr.error, fc.error].filter(Boolean)
   const loading = cp.loading || cr.loading || fc.loading
 
   return (
-    <div className="space-y-6">
-      <h1 className="text-xl font-bold text-[#f1f5f9]">Contas a Pagar e Receber</h1>
+    <div className="pb-20 md:pb-0">
+      <PageHeader
+        eyebrow="Financeiro"
+        title="Contas e fluxo"
+        description="Este modulo apresenta os registros financeiros retornados na coleta D-1. Listas vazias significam ausencia de parcelas retornadas para a data, nao problema visual."
+        meta={
+          <>
+            <StatusPill tone="muted">Snapshot D-1</StatusPill>
+            {errors.length > 0 && <StatusPill tone="red">{errors.length} erro(s)</StatusPill>}
+          </>
+        }
+      />
 
-      {/* KPIs CP/CR */}
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-        <KPI label="CP — Total Pendente" value={cp.loading ? '...' : formatBRL(cpData?.summary?.total_pendente || 0)} color="text-[#f59e0b]" icon="💸" />
-        <KPI label="CP — Vencido" value={cp.loading ? '...' : formatBRL(cpData?.summary?.total_vencido || 0)} color="text-[#ef4444]" icon="🔴" />
-        <KPI label="CR — Total Pendente" value={cr.loading ? '...' : formatBRL(crData?.summary?.total_pendente || 0)} color="text-[#38bdf8]" icon="💰" />
-        <KPI label="CR — Inadimplente" value={cr.loading ? '...' : formatBRL(crData?.summary?.total_inadimplente || 0)} color="text-[#ef4444]" icon="⚠️" />
-      </div>
-
-      {/* Saldo líquido destaque */}
-      {!cr.loading && crData && (
-        <div className={`rounded-xl p-4 border text-center ${
-          (crData.summary?.saldo_liquido || 0) >= 0
-            ? 'bg-green-900/20 border-green-700' : 'bg-red-900/20 border-red-700'
-        }`}>
-          <p className="text-[#94a3b8] text-sm">Saldo Líquido (CR − CP)</p>
-          <p className={`text-3xl font-bold mt-1 ${(crData.summary?.saldo_liquido || 0) >= 0 ? 'text-[#22c55e]' : 'text-[#ef4444]'}`}>
-            {formatBRL(crData.summary?.saldo_liquido || 0)}
-          </p>
-        </div>
+      {errors.length > 0 && (
+        <Panel title="Alertas financeiros" subtitle="Falhas retornadas pelos modulos de CP, CR ou fluxo." className="mb-4">
+          <div className="p-4 text-sm text-[var(--text-secondary)]">
+            {errors.map((error, index) => <p key={index} className="m-0 py-1">{error}</p>)}
+          </div>
+        </Panel>
       )}
 
-      {/* Fluxo de Caixa */}
-      <div className="bg-[#1e293b] rounded-xl p-5 border border-[#475569]">
-        <h3 className="text-sm font-medium text-[#94a3b8] mb-4">💸 Projeção de Fluxo de Caixa (4 semanas)</h3>
-        {fc.loading ? <div className="h-48 bg-[#334155] rounded animate-pulse" /> : projecao.length > 0 ? (
-          <>
-            <Bar
-              data={{
-                labels: projecao.map((p: any) => p.semana),
-                datasets: [
-                  { label: 'Entradas', data: projecao.map((p: any) => p.entradas_previstas), backgroundColor: 'rgba(34,197,94,0.7)', borderRadius: 4 },
-                  { label: 'Saídas', data: projecao.map((p: any) => p.saidas_previstas), backgroundColor: 'rgba(239,68,68,0.7)', borderRadius: 4 },
-                ]
-              }}
-              options={{
-                responsive: true,
-                plugins: { legend: { labels: { color: '#94a3b8' } } },
-                scales: {
-                  x: { ticks: { color: '#64748b' }, grid: { color: '#334155' } },
-                  y: { ticks: { color: '#64748b', callback: (v: any) => `R$${(v/1000).toFixed(0)}k` }, grid: { color: '#334155' } }
-                }
-              }}
-            />
-            <div className="mt-4 grid grid-cols-4 gap-2 text-xs text-center">
-              {projecao.map((p: any, i: number) => (
-                <div key={i} className={`rounded-lg p-2 ${p.saldo_semana >= 0 ? 'bg-green-900/30' : 'bg-red-900/30'}`}>
-                  <p className="text-[#64748b]">{p.semana}</p>
-                  <p className={`font-bold mt-1 ${p.saldo_semana >= 0 ? 'text-[#22c55e]' : 'text-[#ef4444]'}`}>
-                    {formatBRL(p.saldo_semana)}
-                  </p>
-                </div>
-              ))}
-            </div>
-          </>
-        ) : <div className="text-center text-[#475569] py-8">Sem dados de fluxo de caixa</div>}
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+        <MetricCard label="CP pendente" value={cp.loading ? '...' : formatBRL(cpData?.summary?.total_pendente || 0)} detail="contas a pagar" tone="orange" />
+        <MetricCard label="CP vencido" value={cp.loading ? '...' : formatBRL(cpData?.summary?.total_vencido || 0)} detail="retorno D-1" tone="red" />
+        <MetricCard label="CR pendente" value={cr.loading ? '...' : formatBRL(crData?.summary?.total_pendente || 0)} detail="contas a receber" tone="blue" />
+        <MetricCard label="Saldo liquido" value={cr.loading ? '...' : formatBRL(crData?.summary?.saldo_liquido || 0)} detail="CR - CP" tone={(crData?.summary?.saldo_liquido || 0) >= 0 ? 'green' : 'red'} />
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {/* CP Vencidos */}
-        <div className="bg-[#1e293b] rounded-xl p-5 border border-[#475569]">
-          <h3 className="text-sm font-medium text-[#f59e0b] mb-4">💸 CP — Contas Vencidas</h3>
-          {loading ? <div className="h-32 bg-[#334155] rounded animate-pulse" /> :
-            (cpData?.vencidos?.length > 0) ? (
-              <ul className="space-y-2">
-                {cpData.vencidos.slice(0, 8).map((item: any, i: number) => (
-                  <li key={i} className="flex items-center justify-between text-sm">
-                    <div className="flex-1 min-w-0">
-                      <p className="text-[#cbd5e1] truncate">{item.descricao}</p>
-                      <p className="text-[#ef4444] text-xs">{item.dias_atraso}d de atraso</p>
-                    </div>
-                    <span className="text-[#f59e0b] font-medium ml-3 whitespace-nowrap">{formatBRL(item.valor)}</span>
-                  </li>
-                ))}
-              </ul>
-            ) : <p className="text-[#475569] text-sm text-center py-4">✅ Nenhuma conta vencida</p>
-          }
-        </div>
+      <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-2">
+        <Panel title="Fluxo projetado" subtitle="Gerado quando existem vencimentos retornados">
+          <div className="h-72 p-4">
+            {loading ? <LoadingBlock height="h-full" /> : projecao.length > 0 ? (
+              <Bar
+                data={{
+                  labels: projecao.map(item => item.semana),
+                  datasets: [
+                    { label: 'Entradas', data: projecao.map(item => item.entradas_previstas), backgroundColor: '#42d392', borderRadius: 5 },
+                    { label: 'Saidas', data: projecao.map(item => item.saidas_previstas), backgroundColor: '#ff5f57', borderRadius: 5 },
+                  ],
+                }}
+                options={{
+                  responsive: true,
+                  maintainAspectRatio: false,
+                  plugins: { legend: { labels: { color: '#b7b7b7' } } },
+                  scales: {
+                    x: { ticks: { color: '#747474' }, grid: { color: 'rgba(255,255,255,.06)' } },
+                    y: { ticks: { color: '#747474' }, grid: { color: 'rgba(255,255,255,.06)' } },
+                  },
+                }}
+              />
+            ) : <EmptyState title="Sem fluxo para projetar" detail="A coleta D-1 nao retornou vencimentos financeiros suficientes para formar a serie." />}
+          </div>
+        </Panel>
 
-        {/* CR Inadimplentes */}
-        <div className="bg-[#1e293b] rounded-xl p-5 border border-[#475569]">
-          <h3 className="text-sm font-medium text-[#ef4444] mb-4">⚠️ CR — Inadimplentes</h3>
-          {loading ? <div className="h-32 bg-[#334155] rounded animate-pulse" /> :
-            (crData?.inadimplentes?.length > 0) ? (
-              <ul className="space-y-2">
-                {crData.inadimplentes.slice(0, 8).map((item: any, i: number) => (
-                  <li key={i} className="flex items-center justify-between text-sm">
-                    <div className="flex-1 min-w-0">
-                      <p className="text-[#cbd5e1] truncate">{item.cliente}</p>
-                      <p className="text-[#94a3b8] text-xs">Venc: {formatDate(item.data_vencimento)} · {item.dias_atraso}d</p>
-                    </div>
-                    <span className="text-[#ef4444] font-medium ml-3 whitespace-nowrap">{formatBRL(item.valor)}</span>
-                  </li>
-                ))}
-              </ul>
-            ) : <p className="text-[#475569] text-sm text-center py-4">✅ Nenhum inadimplente</p>
-          }
-        </div>
+        <Panel title="Resumo por semana" subtitle="Entradas, saidas e saldo">
+          <div className="p-4">
+            {loading ? <LoadingBlock /> : projecao.length > 0 ? (
+              <table className="data-table">
+                <thead><tr><th>Semana</th><th className="text-right">Entradas</th><th className="text-right">Saidas</th><th className="text-right">Saldo</th></tr></thead>
+                <tbody>
+                  {projecao.map((item, index) => (
+                    <tr key={`${item.semana}-${index}`}>
+                      <td>{item.semana}</td>
+                      <td className="text-right text-[var(--success)]">{formatBRL(item.entradas_previstas || 0)}</td>
+                      <td className="text-right text-[var(--danger)]">{formatBRL(item.saidas_previstas || 0)}</td>
+                      <td className="text-right font-bold">{formatBRL(item.saldo_semana || 0)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : <EmptyState title="Sem semanas calculadas" detail="Painel pronto para aparecer quando houver parcelas retornadas." />}
+          </div>
+        </Panel>
+      </div>
+
+      <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-2">
+        <Panel title="CP vencidos" subtitle="Contas a pagar retornadas como vencidas">
+          <FinancialList
+            loading={loading}
+            items={cpData?.vencidos || []}
+            emptyTitle="Sem CP vencido no D-1"
+            getName={(item) => item.descricao || 'Fornecedor nao informado'}
+            getDetail={(item) => `${item.dias_atraso || 0}d atraso`}
+          />
+        </Panel>
+
+        <Panel title="CR inadimplentes" subtitle="Contas a receber retornadas em atraso">
+          <FinancialList
+            loading={loading}
+            items={crData?.inadimplentes || []}
+            emptyTitle="Sem CR inadimplente no D-1"
+            getName={(item) => item.cliente || 'Cliente nao informado'}
+            getDetail={(item) => item.data_vencimento ? `Venc. ${formatDate(item.data_vencimento)}` : 'Sem vencimento'}
+          />
+        </Panel>
       </div>
     </div>
   )
 }
 
-function KPI({ label, value, color, icon }: { label: string; value: string; color: string; icon: string }) {
+function FinancialList({
+  loading,
+  items,
+  emptyTitle,
+  getName,
+  getDetail,
+}: {
+  loading: boolean
+  items: any[]
+  emptyTitle: string
+  getName: (item: any) => string
+  getDetail: (item: any) => string
+}) {
   return (
-    <div className="bg-[#1e293b] rounded-xl p-5 border border-[#475569]">
-      <div className="flex items-center gap-2 mb-2"><span>{icon}</span><span className="text-[#94a3b8] text-xs">{label}</span></div>
-      <p className={`text-xl font-bold ${color}`}>{value}</p>
+    <div className="p-4">
+      {loading ? <LoadingBlock /> : items.length > 0 ? (
+        <table className="data-table">
+          <thead><tr><th>Registro</th><th>Detalhe</th><th className="text-right">Valor</th></tr></thead>
+          <tbody>
+            {items.slice(0, 10).map((item, index) => (
+              <tr key={`${item.id}-${index}`}>
+                <td className="max-w-[300px] truncate">{getName(item)}</td>
+                <td>{getDetail(item)}</td>
+                <td className="text-right font-bold text-[var(--accent)]">{formatBRL(item.valor || 0)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      ) : <EmptyState title={emptyTitle} detail="A tela diferencia ausencia de registro de erro de coleta." />}
     </div>
   )
 }
+

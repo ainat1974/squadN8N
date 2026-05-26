@@ -21,7 +21,11 @@ async function fetchModulo(modulo: string, options: FetchModuloOptions = {}) {
     headers: { 'Accept': 'application/json' }
   })
   if (!res.ok) throw new Error(`Erro ao buscar ${modulo}: ${res.status}`)
-  return res.json()
+  const json = await res.json()
+  if (json && json.success === false) {
+    throw new Error(json.error || `Dados indisponiveis para ${modulo}`)
+  }
+  return json
 }
 
 export const api = {
@@ -41,6 +45,10 @@ export function formatBRL(value: number): string {
 // Formatar data pt-BR
 export function formatDate(iso: string): string {
   if (!iso) return '—'
+  if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) {
+    const [year, month, day] = iso.split('-')
+    return `${day}/${month}/${year}`
+  }
   return new Date(iso).toLocaleDateString('pt-BR')
 }
 

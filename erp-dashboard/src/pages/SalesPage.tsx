@@ -1,17 +1,15 @@
-// ============================================================
-// SalesPage.tsx — Página de Vendas com dados reais
-// ============================================================
-import { useErpData } from '../hooks/useErpData'
-import { api, formatBRL, formatNum } from '../services/api'
-import { usePeriod } from '../context/PeriodContext'
-import { filterByRecentDays, periodDays, periodLabel } from '../utils/period'
+import { Bar, Doughnut } from 'react-chartjs-2'
 import {
   Chart as ChartJS, CategoryScale, LinearScale, BarElement,
-  LineElement, PointElement, Title, Tooltip, Legend, ArcElement
+  ArcElement, Tooltip, Legend
 } from 'chart.js'
-import { Bar, Doughnut } from 'react-chartjs-2'
+import { useErpData } from '../hooks/useErpData'
+import { api, formatBRL, formatDate, formatNum } from '../services/api'
+import { usePeriod } from '../context/PeriodContext'
+import { periodDays, periodLabel } from '../utils/period'
+import { EmptyState, LoadingBlock, MetricCard, PageHeader, Panel, StatusPill } from '../components/DashboardPrimitives'
 
-ChartJS.register(CategoryScale, LinearScale, BarElement, LineElement, PointElement, Title, Tooltip, Legend, ArcElement)
+ChartJS.register(CategoryScale, LinearScale, BarElement, ArcElement, Tooltip, Legend)
 
 export default function SalesPage() {
   const { period } = usePeriod()
@@ -21,140 +19,140 @@ export default function SalesPage() {
     () => api.vendas({ periodo: period, dias: diasPeriodo }),
     [period],
   )
-  const d = (data as any)?.dados
 
+  const response = data as any
+  const d = response?.dados
   const summary = d?.summary || {}
-  const evolucaoAll: any[] = d?.evolucao_diaria || []
-  const evolucao = filterByRecentDays(evolucaoAll, diasPeriodo, item => item.data)
-  const receitaPeriodo = evolucao.reduce((total: number, item: any) => total + Number(item.receita || 0), 0)
-  const volumePeriodo = evolucao.reduce((total: number, item: any) => total + Number(item.volume || 0), 0)
-  const ticketMedioPeriodo = volumePeriodo > 0 ? receitaPeriodo / volumePeriodo : 0
+  const evolucao: any[] = d?.evolucao_diaria || []
   const topProdutos: any[] = d?.top_produtos?.slice(0, 10) || []
-  const topClientes: any[] = d?.top_clientes?.slice(0, 5) || []
-
-  const chartLabels = evolucao.map((e: any, i: number) => {
-    if (!e.data) return `Período ${i + 1}`
-    const d = new Date(e.data)
-    return isNaN(d.getTime()) ? e.data : d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })
-  })
-
-  const doughnutData = (summary.receita_b2b > 0 || summary.receita_pdv > 0) ? {
+  const topClientes: any[] = d?.top_clientes?.slice(0, 6) || []
+  const periodo = d?.periodo
+  const doughnutData = {
     labels: ['PDV', 'B2B'],
     datasets: [{
       data: [summary.receita_pdv || 0, summary.receita_b2b || 0],
-      backgroundColor: ['#38bdf8', '#22c55e'],
-      borderWidth: 0,
-    }]
-  } : null
+      backgroundColor: ['#ff7a2f', '#42d392'],
+      borderColor: '#111111',
+      borderWidth: 2,
+    }],
+  }
 
-  if (error) return <ErrorCard msg={error} onRetry={refresh} />
+  if (error) {
+    return (
+      <Panel title="Vendas indisponiveis" subtitle="O N8N retornou erro para este modulo.">
+        <div className="p-6">
+          <EmptyState title={error} detail="Tente atualizar depois de executar o workflow." />
+          <button onClick={refresh} className="action-button mt-4 px-4 text-sm font-bold">Tentar novamente</button>
+        </div>
+      </Panel>
+    )
+  }
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-bold text-[#f1f5f9]">Análise de Vendas</h1>
-        <span className="text-xs text-[#38bdf8] font-medium bg-[#0f172a] border border-[#334155] px-2 py-1 rounded">
-          Período: {labelPeriodo}
-        </span>
+    <div className="pb-20 md:pb-0">
+      <PageHeader
+        eyebrow="Relatorio de vendas"
+        title="Vendas coletadas"
+        description="Leitura comercial baseada na coleta D-1 e no historico diario acumulado. Quando ha apenas um dia no historico, os periodos maiores preservam a mesma base demonstravel."
+        meta={
+          <>
+            <StatusPill tone="orange">{labelPeriodo}</StatusPill>
+            {periodo?.inicio && <StatusPill tone="muted">{formatDate(periodo.inicio)} a {formatDate(periodo.fim)}</StatusPill>}
+          </>
+        }
+      />
+
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+        <MetricCard label="Receita" value={loading ? '...' : formatBRL(summary.receita_total || 0)} detail="PDV + B2B" tone="orange" />
+        <MetricCard label="Volume" value={loading ? '...' : formatNum(summary.volume_vendas || 0)} detail="registros de venda" tone="blue" />
+        <MetricCard label="Ticket medio" value={loading ? '...' : formatBRL(summary.ticket_medio || 0)} detail="receita / volume" tone="green" />
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <StatCard label="Receita Total" value={loading ? '...' : formatBRL(receitaPeriodo || summary.receita_total || 0)} icon="💰" />
-        <StatCard label="Volume de Vendas" value={loading ? '...' : `${formatNum(volumePeriodo || summary.volume_vendas || 0)} pedidos`} icon="🛒" />
-        <StatCard label="Ticket Médio" value={loading ? '...' : formatBRL(ticketMedioPeriodo || summary.ticket_medio || 0)} icon="📊" />
+      <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-3">
+        <Panel title="Receita diaria" subtitle={`Serie ${labelPeriodo}`} className="xl:col-span-2">
+          <div className="h-72 p-4">
+            {loading ? <LoadingBlock height="h-full" /> : evolucao.length > 0 ? (
+              <Bar
+                data={{
+                  labels: evolucao.map(item => formatDate(item.data)),
+                  datasets: [{
+                    label: 'Receita',
+                    data: evolucao.map(item => Number(item.receita || 0)),
+                    backgroundColor: '#ff7a2f',
+                    borderRadius: 5,
+                  }],
+                }}
+                options={{
+                  responsive: true,
+                  maintainAspectRatio: false,
+                  plugins: { legend: { display: false } },
+                  scales: {
+                    x: { ticks: { color: '#747474' }, grid: { color: 'rgba(255,255,255,.06)' } },
+                    y: { ticks: { color: '#747474' }, grid: { color: 'rgba(255,255,255,.06)' } },
+                  },
+                }}
+              />
+            ) : <EmptyState title="Sem serie no periodo" detail="O historico sera preenchido por execucoes diarias." />}
+          </div>
+        </Panel>
+
+        <Panel title="Canal de venda" subtitle="Participacao PDV / B2B">
+          <div className="h-72 p-4">
+            {loading ? <LoadingBlock height="h-full" /> : (summary.receita_pdv || summary.receita_b2b) ? (
+              <Doughnut
+                data={doughnutData}
+                options={{
+                  responsive: true,
+                  maintainAspectRatio: false,
+                  cutout: '64%',
+                  plugins: { legend: { labels: { color: '#b7b7b7' } } },
+                }}
+              />
+            ) : <EmptyState title="Sem divisao por canal" detail="A coleta D-1 retornou zero para PDV e B2B." />}
+          </div>
+        </Panel>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <div className="lg:col-span-2 bg-[#1e293b] rounded-xl p-5 border border-[#475569]">
-          <h3 className="text-sm font-medium text-[#94a3b8] mb-4">📈 Evolução de Receita Diária ({labelPeriodo})</h3>
-          {loading ? <Skeleton height="h-52" /> : evolucao.length > 0 ? (
-            <Bar
-              data={{
-                labels: chartLabels,
-                datasets: [{ label: 'Receita (R$)', data: evolucao.map((e: any) => e.receita), backgroundColor: 'rgba(56,189,248,0.7)', borderRadius: 4 }]
-              }}
-              options={{
-                responsive: true,
-                plugins: { legend: { display: false } },
-                scales: {
-                  x: { ticks: { color: '#64748b', font: { size: 10 } }, grid: { color: '#334155' } },
-                  y: { ticks: { color: '#64748b', callback: (v: any) => `R$${(v/1000).toFixed(0)}k` }, grid: { color: '#334155' } }
-                }
-              }}
-            />
-          ) : <Empty msg="Sem dados de evolução" />}
-        </div>
+      <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-2">
+        <Panel title="Top produtos" subtitle="Ranking por receita coletada">
+          <div className="p-4">
+            {loading ? <LoadingBlock /> : topProdutos.length > 0 ? (
+              <table className="data-table">
+                <thead><tr><th>Produto</th><th className="text-right">Qtd.</th><th className="text-right">Receita</th></tr></thead>
+                <tbody>
+                  {topProdutos.map((item, index) => (
+                    <tr key={`${item.produto}-${index}`}>
+                      <td className="max-w-[340px] truncate">{item.produto}</td>
+                      <td className="text-right">{formatNum(item.quantidade || 0)}</td>
+                      <td className="text-right font-bold text-[var(--accent)]">{formatBRL(item.receita || 0)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : <EmptyState title="Sem produtos no periodo" detail="Nao houve produtos retornados para a janela selecionada." />}
+          </div>
+        </Panel>
 
-        <div className="bg-[#1e293b] rounded-xl p-5 border border-[#475569] flex flex-col items-center">
-          <h3 className="text-sm font-medium text-[#94a3b8] mb-4 self-start">🥧 PDV vs B2B</h3>
-          {loading ? <Skeleton height="h-36" /> : doughnutData ? (
-            <>
-              <Doughnut data={doughnutData} options={{ plugins: { legend: { labels: { color: '#94a3b8' } } }, cutout: '65%' }} />
-              <div className="mt-3 text-center text-xs text-[#64748b]">
-                <div>PDV: <span className="text-[#38bdf8] font-medium">{formatBRL(summary.receita_pdv || 0)}</span></div>
-                <div>B2B: <span className="text-[#22c55e] font-medium">{formatBRL(summary.receita_b2b || 0)}</span></div>
-              </div>
-            </>
-          ) : <Empty msg="Sem breakdown disponível" />}
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <div className="bg-[#1e293b] rounded-xl p-5 border border-[#475569]">
-          <h3 className="text-sm font-medium text-[#94a3b8] mb-4">🏆 Top 10 Produtos por Receita</h3>
-          {loading ? <Skeleton /> : topProdutos.length > 0 ? (
-            <ul className="space-y-2">
-              {topProdutos.map((p: any, i: number) => (
-                <li key={i} className="flex items-center gap-3 text-sm">
-                  <span className="text-[#64748b] w-5 text-right">{i + 1}.</span>
-                  <span className="text-[#cbd5e1] flex-1 truncate">{p.produto}</span>
-                  <span className="text-[#22c55e] font-medium whitespace-nowrap">{formatBRL(p.receita)}</span>
-                </li>
-              ))}
-            </ul>
-          ) : <Empty msg="Sem dados de produtos" />}
-        </div>
-
-        <div className="bg-[#1e293b] rounded-xl p-5 border border-[#475569]">
-          <h3 className="text-sm font-medium text-[#94a3b8] mb-4">👥 Top 5 Clientes B2B</h3>
-          {loading ? <Skeleton /> : topClientes.length > 0 ? (
-            <ul className="space-y-3">
-              {topClientes.map((c: any, i: number) => (
-                <li key={i} className="flex items-center justify-between text-sm">
-                  <div>
-                    <p className="text-[#cbd5e1]">{c.cliente}</p>
-                    <p className="text-[#64748b] text-xs">{formatNum(c.volume)} pedidos</p>
-                  </div>
-                  <span className="text-[#38bdf8] font-medium">{formatBRL(c.receita)}</span>
-                </li>
-              ))}
-            </ul>
-          ) : <Empty msg="Sem dados de clientes B2B" />}
-        </div>
+        <Panel title="Clientes B2B" subtitle="Quando o endpoint B2B retornar dados">
+          <div className="p-4">
+            {loading ? <LoadingBlock /> : topClientes.length > 0 ? (
+              <table className="data-table">
+                <thead><tr><th>Cliente</th><th className="text-right">Pedidos</th><th className="text-right">Receita</th></tr></thead>
+                <tbody>
+                  {topClientes.map((item, index) => (
+                    <tr key={`${item.cliente}-${index}`}>
+                      <td className="max-w-[340px] truncate">{item.cliente}</td>
+                      <td className="text-right">{formatNum(item.volume || 0)}</td>
+                      <td className="text-right font-bold text-[var(--success)]">{formatBRL(item.receita || 0)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : <EmptyState title="Sem B2B na coleta" detail="O dia coletado possui dados PDV, mas nao retornou ranking B2B." />}
+          </div>
+        </Panel>
       </div>
     </div>
   )
 }
 
-function StatCard({ label, value, icon }: { label: string; value: string; icon: string }) {
-  return (
-    <div className="bg-[#1e293b] rounded-xl p-5 border border-[#475569]">
-      <div className="flex items-center gap-2 mb-2"><span>{icon}</span><span className="text-[#94a3b8] text-sm">{label}</span></div>
-      <p className="text-2xl font-bold text-[#f1f5f9]">{value}</p>
-    </div>
-  )
-}
-function Skeleton({ height = 'h-24' }: { height?: string }) {
-  return <div className={`${height} bg-[#334155] rounded-lg animate-pulse`} />
-}
-function Empty({ msg }: { msg: string }) {
-  return <div className="h-32 flex items-center justify-center text-[#475569] text-sm">{msg}</div>
-}
-function ErrorCard({ msg, onRetry }: { msg: string; onRetry: () => void }) {
-  return (
-    <div className="bg-[#7f1d1d] border border-[#ef4444] rounded-xl p-6 text-center">
-      <p className="text-[#fca5a5] mb-3">⚠️ {msg}</p>
-      <button onClick={onRetry} className="text-sm text-white bg-red-700 px-4 py-2 rounded-lg hover:bg-red-600">Tentar novamente</button>
-    </div>
-  )
-}
