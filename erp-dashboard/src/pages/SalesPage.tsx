@@ -24,7 +24,15 @@ export default function SalesPage() {
   const d = response?.dados
   const summary = d?.summary || {}
   const evolucao: any[] = d?.evolucao_diaria || []
-  const topProdutos: any[] = d?.top_produtos?.slice(0, 10) || []
+  const produtosVendidos: any[] = d?.produtos_vendidos || d?.top_produtos || []
+  const topProdutos: any[] = [...produtosVendidos]
+    .map(item => ({
+      ...item,
+      quantidade: Number(item.quantidade || 0),
+      valor_total: Number(item.valor_total ?? item.receita ?? 0),
+    }))
+    .sort((a, b) => b.quantidade - a.quantidade)
+    .slice(0, 10)
   const topClientes: any[] = d?.top_clientes?.slice(0, 6) || []
   const periodo = d?.periodo
   const doughnutData = {
@@ -114,17 +122,30 @@ export default function SalesPage() {
       </div>
 
       <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-2">
-        <Panel title="Top produtos" subtitle="Ranking por receita coletada">
+        <Panel title="Top 10 produtos mais vendidos" subtitle="Ranking pela quantidade vendida no periodo">
           <div className="p-4">
             {loading ? <LoadingBlock /> : topProdutos.length > 0 ? (
               <table className="data-table">
-                <thead><tr><th>Produto</th><th className="text-right">Qtd.</th><th className="text-right">Receita</th></tr></thead>
+                <thead>
+                  <tr>
+                    <th className="w-10 text-right">#</th>
+                    <th>Produto</th>
+                    <th className="text-right">Quantidade</th>
+                    <th className="text-right">Valor total</th>
+                  </tr>
+                </thead>
                 <tbody>
                   {topProdutos.map((item, index) => (
-                    <tr key={`${item.produto}-${index}`}>
-                      <td className="max-w-[340px] truncate">{item.produto}</td>
-                      <td className="text-right">{formatNum(item.quantidade || 0)}</td>
-                      <td className="text-right font-bold text-[var(--accent)]">{formatBRL(item.receita || 0)}</td>
+                    <tr key={`${item.codigo || item.produto}-${index}`}>
+                      <td className="text-right text-[var(--text-muted)]">{index + 1}</td>
+                      <td className="max-w-[320px]">
+                        <div className="truncate font-bold text-[var(--text-primary)]">{item.produto}</div>
+                        {item.codigo && (
+                          <div className="text-[11px] text-[var(--text-muted)]">SKU {item.codigo}</div>
+                        )}
+                      </td>
+                      <td className="text-right font-bold text-[var(--info)]">{formatNum(item.quantidade)}</td>
+                      <td className="text-right font-bold text-[var(--accent)]">{formatBRL(item.valor_total)}</td>
                     </tr>
                   ))}
                 </tbody>

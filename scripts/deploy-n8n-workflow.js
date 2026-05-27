@@ -56,7 +56,7 @@ function injectRuntimeCredentials(nodes) {
   return nodes.map(node => {
     const copy = JSON.parse(JSON.stringify(node));
 
-    if (copy.name === '🔐 Autenticar Dapic') {
+    if (copy.name === '🔐 Autenticar Dapic' || copy.name === 'Autenticar Dapic') {
       const params = copy.parameters?.bodyParameters?.parameters || [];
       for (const param of params) {
         if (param.name === 'Empresa') param.value = creds.empresa;
