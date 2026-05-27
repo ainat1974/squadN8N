@@ -12,7 +12,7 @@
         "LOG_LEVEL": "error",
         "DISABLE_CONSOLE_OUTPUT": "true",
         "N8N_API_URL": "https://workflows.tmrodrigues.tech/",
-        "N8N_API_KEY": "SEU_N8N_API_KEY_AQUI"
+        "N8N_API_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI5ZWQyZDYyNy05NDQwLTRiZWMtYjcwMS1hZDZmZThlM2M3ODgiLCJpc3MiOiJuOG4iLCJhdWQiOiJwdWJsaWMtYXBpIiwianRpIjoiY2U3NGNjNGItMWE3MC00MmMyLWE1ZWYtNjZmYTI4MDcxYTZjIiwiaWF0IjoxNzc5NzUwMzE5fQ.qt_jMJ4J8hrev6xeCUd2SLk8LvmdF1X510KDh8_iav4"
       }
     },
     "vercel": {
