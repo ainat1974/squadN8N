@@ -33,7 +33,8 @@ export default function SalesPage() {
     }))
     .sort((a, b) => b.quantidade - a.quantidade)
     .slice(0, 10)
-  const topClientes: any[] = d?.top_clientes?.slice(0, 6) || []
+  const estoqueLinhas: any[] = d?.estoque_top10_linhas || []
+  const estoquePorProduto: any[] = d?.estoque_top10 || []
   const periodo = d?.periodo
   const doughnutData = {
     labels: ['PDV', 'B2B'],
@@ -154,22 +155,42 @@ export default function SalesPage() {
           </div>
         </Panel>
 
-        <Panel title="Clientes B2B" subtitle="Quando o endpoint B2B retornar dados">
-          <div className="p-4">
-            {loading ? <LoadingBlock /> : topClientes.length > 0 ? (
+        <Panel
+          title="Estoque atual dos Top 10"
+          subtitle={
+            estoquePorProduto.length > 0
+              ? `${estoqueLinhas.length} variacoes em ${estoquePorProduto.length} produtos`
+              : 'Saldo por cor e tamanho'
+          }
+        >
+          <div className="max-h-[28rem] overflow-y-auto p-4">
+            {loading ? <LoadingBlock /> : estoqueLinhas.length > 0 ? (
               <table className="data-table">
-                <thead><tr><th>Cliente</th><th className="text-right">Pedidos</th><th className="text-right">Receita</th></tr></thead>
+                <thead className="sticky top-0 bg-[var(--bg-panel)]">
+                  <tr>
+                    <th>Produto</th>
+                    <th>Cor</th>
+                    <th className="text-center">Tamanho</th>
+                    <th className="text-right">Quantidade</th>
+                  </tr>
+                </thead>
                 <tbody>
-                  {topClientes.map((item, index) => (
-                    <tr key={`${item.cliente}-${index}`}>
-                      <td className="max-w-[340px] truncate">{item.cliente}</td>
-                      <td className="text-right">{formatNum(item.volume || 0)}</td>
-                      <td className="text-right font-bold text-[var(--success)]">{formatBRL(item.receita || 0)}</td>
+                  {estoqueLinhas.map((item, index) => (
+                    <tr key={`${item.codigo}-${item.cor}-${item.tamanho}-${index}`}>
+                      <td className="max-w-[260px]">
+                        <div className="truncate font-bold text-[var(--text-primary)]">{item.produto}</div>
+                        {item.codigo && (
+                          <div className="text-[11px] text-[var(--text-muted)]">SKU {item.codigo}</div>
+                        )}
+                      </td>
+                      <td className="text-[var(--text-secondary)]">{item.cor || '-'}</td>
+                      <td className="text-center font-bold text-[var(--text-primary)]">{item.tamanho || '-'}</td>
+                      <td className="text-right font-bold text-[var(--info)]">{formatNum(item.quantidade)}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
-            ) : <EmptyState title="Sem B2B na coleta" detail="O dia coletado possui dados PDV, mas nao retornou ranking B2B." />}
+            ) : <EmptyState title="Sem estoque na coleta" detail="O snapshot atual nao retornou variacoes para os top 10." />}
           </div>
         </Panel>
       </div>
