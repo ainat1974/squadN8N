@@ -32,6 +32,7 @@ export const api = {
   resumo: (options?: FetchModuloOptions) => fetchModulo('resumo', options),
   vendas: (options?: FetchModuloOptions) => fetchModulo('vendas', options),
   estoque: (options?: FetchModuloOptions) => fetchModulo('estoque', options),
+  insights: (options?: FetchModuloOptions) => fetchModulo('insights', options),
   contasPagar: (options?: FetchModuloOptions) => fetchModulo('contas-pagar', options),
   contasReceber: (options?: FetchModuloOptions) => fetchModulo('contas-receber', options),
   fluxoCaixa: (options?: FetchModuloOptions) => fetchModulo('fluxo-caixa', options),

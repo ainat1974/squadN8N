@@ -2,6 +2,7 @@ import { NavLink, useNavigate } from 'react-router-dom'
 
 const navItems = [
   { path: '/visao-geral', code: '01', label: 'Visao Geral' },
+  { path: '/insights', code: 'IA', label: 'Insights IA' },
   { path: '/vendas', code: '02', label: 'Vendas' },
   { path: '/estoque', code: '03', label: 'Estoque' },
   { path: '/financeiro', code: '04', label: 'Financeiro' },
@@ -60,7 +61,7 @@ export default function Sidebar() {
         </div>
       </aside>
 
-      <nav className="fixed inset-x-3 bottom-3 z-30 grid grid-cols-4 gap-1 rounded-lg border border-[var(--border)] bg-black/90 p-1 shadow-2xl backdrop-blur md:hidden">
+      <nav className="fixed inset-x-3 bottom-3 z-30 grid grid-cols-5 gap-1 rounded-lg border border-[var(--border)] bg-black/90 p-1 shadow-2xl backdrop-blur md:hidden">
         {navItems.map(item => (
           <NavLink
             key={item.path}
