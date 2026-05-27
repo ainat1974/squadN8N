@@ -1,19 +1,16 @@
+import { useState } from 'react'
 import { useErpData } from '../hooks/useErpData'
 import { api, formatBRL, formatNum } from '../services/api'
-import { EmptyState, LoadingBlock, MetricCard, PageHeader, Panel, ProgressBar, StatusPill } from '../components/DashboardPrimitives'
+import { EmptyState, LoadingBlock, MetricCard, PageHeader, Panel, StatusPill } from '../components/DashboardPrimitives'
 
 export default function StockPage() {
   const { data, loading, error, refresh } = useErpData(api.estoque)
+  const [grupoExpandido, setGrupoExpandido] = useState<string | null>(null)
   const response = data as any
   const d = response?.dados
   const summary = d?.summary || {}
-  const saldoDia: any[] = d?.saldo_dia || []
-  const reposicao: any[] = d?.reposicao_urgente || []
-  const totalSkus = summary.total_skus || saldoDia.length
-  const menoresSaldos = saldoDia
-    .filter(item => Number(item.estoque_atual || 0) >= 0)
-    .sort((a, b) => Number(a.estoque_atual || 0) - Number(b.estoque_atual || 0))
-    .slice(0, 12)
+  const grupos: any[] = d?.grupos || []
+  const linhas: any[] = d?.linhas || []
 
   if (error) {
     return (
@@ -30,66 +27,178 @@ export default function StockPage() {
     <div className="pb-20 md:pb-0">
       <PageHeader
         eyebrow="Snapshot de estoque"
-        title="Estoque operacional"
-        description="A posicao de estoque e um retrato da ultima coleta. Indicadores de giro podem ficar indisponiveis quando a Dapic retorna somente movimentacoes do D-1."
+        title="Estoque dos grupos do Top 10"
+        description="Estoque atual dos produtos vendidos hoje cujos grupos contem ao menos um item do top 10 mais vendido. Permite ver, por familia, o saldo disponivel x venda do dia."
         meta={<StatusPill tone="muted">Snapshot D-1</StatusPill>}
       />
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
-        <MetricCard label="SKUs monitorados" value={loading ? '...' : formatNum(totalSkus || 0)} detail="produtos com saldo" tone="orange" />
-        <MetricCard label="Criticos" value={loading ? '...' : formatNum(summary.skus_criticos || 0)} detail="ate 7 dias" tone="red" />
-        <MetricCard label="Em alerta" value={loading ? '...' : formatNum(summary.skus_alerta || 0)} detail="8 a 15 dias" tone="blue" />
-        <MetricCard label="Valor estoque" value={loading ? '...' : formatBRL(summary.valor_total_estoque || 0)} detail="quando informado pela API" tone="green" />
+        <MetricCard
+          label="Grupos"
+          value={loading ? '...' : formatNum(summary.total_grupos || 0)}
+          detail="familias dos top 10"
+          tone="orange"
+        />
+        <MetricCard
+          label="Produtos"
+          value={loading ? '...' : formatNum(summary.total_produtos || 0)}
+          detail="vendidos no D-1"
+          tone="blue"
+        />
+        <MetricCard
+          label="Estoque (un.)"
+          value={loading ? '...' : formatNum(summary.total_estoque || 0)}
+          detail={`vendido hoje: ${formatNum(summary.total_vendido_hoje || 0)}`}
+          tone="green"
+        />
+        <MetricCard
+          label="Valor custo"
+          value={loading ? '...' : formatBRL(summary.valor_custo_estoque || 0)}
+          detail="estoque a custo"
+          tone="orange"
+        />
       </div>
 
-      <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-2">
-        <Panel title="Menores saldos" subtitle="Produtos que merecem conferencia operacional">
+      <div className="mt-4 grid grid-cols-1 gap-4">
+        <Panel
+          title="Grupos do Top 10"
+          subtitle="Clique para expandir e ver as variacoes (cor + tamanho)"
+        >
           <div className="p-4">
-            {loading ? <LoadingBlock /> : menoresSaldos.length > 0 ? (
-              <table className="data-table">
-                <thead><tr><th>Produto</th><th className="text-right">Saldo</th><th>Pressao</th></tr></thead>
-                <tbody>
-                  {menoresSaldos.map((item, index) => {
-                    const saldo = Number(item.estoque_atual || 0)
-                    return (
-                      <tr key={`${item.codigo}-${index}`}>
-                        <td className="max-w-[360px] truncate">{item.produto}</td>
-                        <td className="text-right font-bold text-[var(--accent)]">{formatNum(saldo)}</td>
-                        <td className="min-w-[120px]"><ProgressBar value={Math.max(0, 20 - saldo)} max={20} tone={saldo <= 2 ? 'red' : 'orange'} /></td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            ) : <EmptyState title="Sem saldos demonstraveis" detail="A coleta de estoque nao retornou itens para listar." />}
-          </div>
-        </Panel>
+            {loading ? <LoadingBlock /> : grupos.length > 0 ? (
+              <div className="space-y-2">
+                {grupos.map(grupo => {
+                  const aberto = grupoExpandido === grupo.grupo
+                  return (
+                    <div
+                      key={grupo.grupo}
+                      className="overflow-hidden rounded-xl border border-[var(--border)] bg-white/[0.02]"
+                    >
+                      <button
+                        onClick={() => setGrupoExpandido(aberto ? null : grupo.grupo)}
+                        className="flex w-full items-center justify-between gap-4 px-4 py-3 text-left transition-colors hover:bg-white/[0.04]"
+                      >
+                        <div className="min-w-0">
+                          <div className="truncate text-sm font-extrabold text-[var(--text-primary)]">
+                            {grupo.grupo}
+                          </div>
+                          <div className="text-[11px] text-[var(--text-muted)]">
+                            {formatNum(grupo.total_produtos)} produto(s) - {formatNum(grupo.total_vendido_hoje)} vendido(s) hoje
+                          </div>
+                        </div>
+                        <div className="flex shrink-0 items-center gap-4">
+                          <div className="text-right">
+                            <div className="text-[11px] uppercase tracking-tight text-[var(--text-muted)]">Estoque</div>
+                            <div className="text-sm font-extrabold text-[var(--info)]">{formatNum(grupo.total_estoque)}</div>
+                          </div>
+                          <div className="text-right">
+                            <div className="text-[11px] uppercase tracking-tight text-[var(--text-muted)]">Custo</div>
+                            <div className="text-sm font-extrabold text-[var(--accent)]">{formatBRL(grupo.valor_custo_estoque || 0)}</div>
+                          </div>
+                          <span className={`grid h-6 w-6 place-items-center rounded-md border border-[var(--border)] text-[var(--text-muted)] transition-transform ${aberto ? 'rotate-180' : ''}`}>
+                            v
+                          </span>
+                        </div>
+                      </button>
 
-        <Panel title="Reposicao calculada" subtitle="Disponivel quando ha velocidade media confiavel">
-          <div className="p-4">
-            {loading ? <LoadingBlock /> : reposicao.length > 0 ? (
-              <table className="data-table">
-                <thead><tr><th>Produto</th><th className="text-right">Venda/dia</th><th className="text-right">Dias</th></tr></thead>
-                <tbody>
-                  {reposicao.slice(0, 10).map((item, index) => (
-                    <tr key={`${item.codigo}-${index}`}>
-                      <td className="max-w-[360px] truncate">{item.produto}</td>
-                      <td className="text-right">{formatNum(item.venda_media_diaria || 0, 1)}</td>
-                      <td className="text-right font-bold text-[var(--danger)]">{formatNum(item.dias_ate_zerar || 0)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                      {aberto && (
+                        <div className="border-t border-[var(--border)] px-4 py-3">
+                          {(grupo.produtos || []).map((produto: any) => (
+                            <div key={produto.id_produto || produto.codigo} className="mb-3 last:mb-0">
+                              <div className="flex items-center justify-between gap-2">
+                                <div className="min-w-0">
+                                  <div className="truncate text-sm font-bold text-[var(--text-primary)]">
+                                    {produto.produto}
+                                    {produto.no_top10 && (
+                                      <span className="ml-2 rounded-full border border-[var(--border-strong)] bg-[var(--accent-soft)] px-2 py-0.5 text-[10px] font-extrabold text-[var(--accent)]">
+                                        TOP 10
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="text-[11px] text-[var(--text-muted)]">SKU {produto.codigo}</div>
+                                </div>
+                                <div className="text-right text-[11px] text-[var(--text-muted)]">
+                                  vendido: <span className="font-extrabold text-[var(--text-primary)]">{formatNum(produto.vendido_hoje)}</span>
+                                  <span className="mx-1">|</span>
+                                  estoque: <span className="font-extrabold text-[var(--info)]">{formatNum(produto.estoque_total)}</span>
+                                </div>
+                              </div>
+                              <table className="data-table mt-2">
+                                <thead>
+                                  <tr>
+                                    <th>Cor</th>
+                                    <th className="text-center">Tamanho</th>
+                                    <th className="text-right">Vendido hoje</th>
+                                    <th className="text-right">Estoque</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {(produto.variacoes || []).map((v: any, idx: number) => (
+                                    <tr key={`${v.cor}-${v.tamanho}-${idx}`}>
+                                      <td className="text-[var(--text-secondary)]">{v.cor || '-'}</td>
+                                      <td className="text-center font-bold text-[var(--text-primary)]">{v.tamanho || '-'}</td>
+                                      <td className="text-right text-[var(--text-secondary)]">{formatNum(v.vendido_hoje || 0)}</td>
+                                      <td className="text-right font-bold text-[var(--info)]">{formatNum(v.estoque || 0)}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
             ) : (
               <EmptyState
-                title="Reposicao sem base historica suficiente"
-                detail="Como a coleta foi reestruturada para D-1, este quadro aparece quando nao ha movimentacao suficiente para calcular venda media."
+                title="Sem dados de estoque"
+                detail="Execute a coleta para popular os grupos do top 10."
               />
             )}
           </div>
         </Panel>
       </div>
+
+      {linhas.length > 0 && !loading && (
+        <div className="mt-4 grid grid-cols-1 gap-4">
+          <Panel
+            title="Lista plana (todas as variacoes)"
+            subtitle={`${linhas.length} linhas - exportavel para conferencia operacional`}
+          >
+            <div className="max-h-[40rem] overflow-y-auto px-4 pb-4">
+              <table className="data-table" style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
+                <thead>
+                  <tr className="[&>th]:sticky [&>th]:top-0 [&>th]:z-10 [&>th]:bg-[var(--bg-panel)] [&>th]:shadow-[inset_0_-1px_0_rgba(255,255,255,0.07)]">
+                    <th className="pt-4">Grupo</th>
+                    <th className="pt-4">Produto</th>
+                    <th className="pt-4">Cor</th>
+                    <th className="pt-4 text-center">Tam.</th>
+                    <th className="pt-4 text-right">Vendido</th>
+                    <th className="pt-4 text-right">Estoque</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {linhas.map((item, index) => (
+                    <tr key={`${item.codigo}-${item.cor}-${item.tamanho}-${index}`}>
+                      <td className="max-w-[200px] truncate text-[var(--text-secondary)]">{item.grupo}</td>
+                      <td className="max-w-[260px]">
+                        <div className="truncate text-[var(--text-primary)]">{item.produto}</div>
+                        <div className="text-[11px] text-[var(--text-muted)]">SKU {item.codigo}</div>
+                      </td>
+                      <td className="text-[var(--text-secondary)]">{item.cor}</td>
+                      <td className="text-center font-bold text-[var(--text-primary)]">{item.tamanho}</td>
+                      <td className="text-right text-[var(--text-secondary)]">{formatNum(item.vendido_hoje || 0)}</td>
+                      <td className="text-right font-bold text-[var(--info)]">{formatNum(item.estoque || 0)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </Panel>
+        </div>
+      )}
     </div>
   )
 }
-
