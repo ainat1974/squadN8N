@@ -163,15 +163,15 @@ export default function SalesPage() {
               : 'Saldo por cor e tamanho'
           }
         >
-          <div className="max-h-[28rem] overflow-y-auto p-4">
+          <div className="max-h-[40rem] overflow-y-auto px-4 pb-4">
             {loading ? <LoadingBlock /> : estoqueLinhas.length > 0 ? (
-              <table className="data-table">
-                <thead className="sticky top-0 bg-[var(--bg-panel)]">
-                  <tr>
-                    <th>Produto</th>
-                    <th>Cor</th>
-                    <th className="text-center">Tamanho</th>
-                    <th className="text-right">Quantidade</th>
+              <table className="data-table" style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
+                <thead>
+                  <tr className="[&>th]:sticky [&>th]:top-0 [&>th]:z-10 [&>th]:bg-[var(--bg-panel)] [&>th]:shadow-[inset_0_-1px_0_rgba(255,255,255,0.07)]">
+                    <th className="pt-4">Produto</th>
+                    <th className="pt-4">Cor</th>
+                    <th className="pt-4 text-center">Tamanho</th>
+                    <th className="pt-4 text-right">Quantidade</th>
                   </tr>
                 </thead>
                 <tbody>
