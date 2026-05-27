@@ -1,0 +1,433 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Redesign Preview — ERP Dashboard</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            fontFamily: {
+              inter: ["Inter", "system-ui", "sans-serif"],
+              grotesk: ["Space Grotesk", "Inter", "system-ui", "sans-serif"],
+            },
+            colors: {
+              ink: {
+                950: "#050505",
+                900: "#0b0b0b",
+                850: "#101010",
+                800: "#111111",
+                750: "#171717",
+                700: "#1c1c1c",
+              },
+              glow: {
+                500: "#ff7a2f",
+                600: "#ff6a1a",
+              },
+            },
+            boxShadow: {
+              panel:
+                "0 22px 46px rgba(0, 0, 0, .45), inset 0 1px 0 rgba(255,255,255,.06)",
+              glow:
+                "0 0 0 1px rgba(255,122,47,.55), 0 0 24px rgba(255,122,47,.18)",
+            },
+            backgroundImage: {
+              grid:
+                "linear-gradient(90deg, rgba(255, 122, 47, 0.07) 1px, transparent 1px), linear-gradient(0deg, rgba(255, 255, 255, 0.035) 1px, transparent 1px)",
+              vignette:
+                "radial-gradient(circle at 20% 10%, rgba(255, 122, 47, 0.16), transparent 35rem), radial-gradient(circle at 70% 30%, rgba(255, 122, 47, 0.08), transparent 32rem), linear-gradient(180deg, #050505 0%, #0b0b0b 58%, #050505 100%)",
+            },
+          },
+        },
+      };
+    </script>
+    <style>
+      :root {
+        color-scheme: dark;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        font-family: Inter, system-ui, sans-serif;
+      }
+      .panel {
+        position: relative;
+        overflow: hidden;
+      }
+      .panel::before {
+        content: "";
+        position: absolute;
+        inset: -2px;
+        background: radial-gradient(
+          circle at 15% 0%,
+          rgba(255, 122, 47, 0.22),
+          transparent 55%
+        );
+        opacity: 0.75;
+        pointer-events: none;
+      }
+      .panel::after {
+        content: "";
+        position: absolute;
+        inset: auto 0 0;
+        height: 1px;
+        background: linear-gradient(
+          90deg,
+          transparent,
+          rgba(255, 122, 47, 0.75),
+          transparent
+        );
+        pointer-events: none;
+      }
+      .arrow {
+        position: relative;
+        display: grid;
+        place-items: center;
+      }
+      .arrow::before {
+        content: "";
+        width: 2px;
+        height: 44px;
+        background: linear-gradient(
+          180deg,
+          transparent,
+          rgba(255, 122, 47, 0.55),
+          transparent
+        );
+      }
+      .arrow svg {
+        margin-top: -10px;
+        filter: drop-shadow(0 6px 14px rgba(255, 122, 47, 0.16));
+      }
+      .spark {
+        background: linear-gradient(
+          90deg,
+          rgba(255, 255, 255, 0.06),
+          rgba(255, 122, 47, 0.18),
+          rgba(255, 255, 255, 0.06)
+        );
+        background-size: 240% 100%;
+        animation: sheen 1.6s ease-in-out infinite;
+      }
+      @keyframes sheen {
+        0% {
+          background-position: 100% 0;
+        }
+        100% {
+          background-position: -100% 0;
+        }
+      }
+      .scrollbar::-webkit-scrollbar {
+        width: 6px;
+        height: 6px;
+      }
+      .scrollbar::-webkit-scrollbar-track {
+        background: rgba(255, 255, 255, 0.04);
+      }
+      .scrollbar::-webkit-scrollbar-thumb {
+        background: rgba(255, 255, 255, 0.16);
+        border-radius: 999px;
+      }
+      .scrollbar::-webkit-scrollbar-thumb:hover {
+        background: rgba(255, 122, 47, 0.35);
+      }
+    </style>
+  </head>
+  <body class="min-h-screen bg-vignette text-white">
+    <div class="min-h-screen bg-grid bg-[length:64px_64px]">
+      <header class="sticky top-0 z-20 border-b border-white/10 bg-ink-950/80 backdrop-blur-xl">
+        <div class="mx-auto flex max-w-6xl items-center gap-4 px-4 py-4 sm:px-6">
+          <div
+            class="grid h-11 w-11 place-items-center rounded-xl border border-glow-500/60 bg-gradient-to-br from-glow-500/20 to-white/5 text-glow-500 shadow-glow"
+            aria-hidden="true"
+          >
+            <span class="font-grotesk text-sm font-bold tracking-tight">TM</span>
+          </div>
+          <div class="min-w-0">
+            <p class="m-0 font-grotesk text-base font-semibold leading-tight tracking-tight">
+              ERP Command Center
+            </p>
+            <p class="m-0 truncate text-xs text-white/60">
+              Preview de redesign inspirado no modelo — sem build
+            </p>
+          </div>
+          <div class="ml-auto flex items-center gap-2">
+            <span class="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-semibold text-white/70">
+              <span class="h-1.5 w-1.5 rounded-full bg-glow-500"></span>
+              D-1 carregado
+            </span>
+            <button
+              class="rounded-xl border border-glow-500/50 bg-gradient-to-b from-glow-500/20 to-glow-500/5 px-4 py-2 text-xs font-bold shadow-glow transition hover:from-glow-500/30 hover:to-glow-500/10"
+            >
+              Atualizar
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <main class="mx-auto max-w-6xl px-4 pb-24 pt-8 sm:px-6">
+        <section class="mb-8">
+          <p class="m-0 text-xs font-extrabold uppercase tracking-tight text-glow-500">
+            TECH MALHAS / ERP
+          </p>
+          <h1 class="mt-2 font-grotesk text-3xl font-semibold tracking-tight sm:text-4xl">
+            Visão Geral Executiva
+          </h1>
+          <p class="mt-2 max-w-3xl text-sm leading-relaxed text-white/65">
+            Layout modular: colunas de cards, painéis com bordas glow e blocos de métricas com
+            micro-animações (inspiração direta do “Modelo Design”).
+          </p>
+        </section>
+
+        <div class="space-y-4">
+          <section class="panel rounded-2xl border border-white/10 bg-ink-800/80 shadow-panel">
+            <div class="grid gap-4 p-4 sm:grid-cols-[220px_1fr] sm:p-5">
+              <div class="rounded-2xl border border-glow-500/40 bg-gradient-to-b from-glow-500/10 to-white/5 p-4 sm:p-5">
+                <div class="flex items-center gap-3">
+                  <div
+                    class="grid h-11 w-11 place-items-center rounded-xl border border-glow-500/50 bg-ink-950/70 text-glow-500 shadow-glow"
+                  >
+                    <i data-lucide="search" class="h-5 w-5"></i>
+                  </div>
+                  <div>
+                    <p class="m-0 font-grotesk text-sm font-semibold tracking-tight">RESEARCH</p>
+                    <p class="m-0 text-xs text-white/55">Coleta e contexto</p>
+                  </div>
+                </div>
+                <div class="mt-4 space-y-2">
+                  <div class="rounded-xl border border-white/10 bg-white/5 p-3">
+                    <p class="m-0 text-[11px] font-bold uppercase tracking-tight text-white/50">
+                      Keyword volume
+                    </p>
+                    <div class="mt-2 h-8 rounded-lg spark"></div>
+                  </div>
+                  <div class="rounded-xl border border-white/10 bg-white/5 p-3">
+                    <p class="m-0 text-[11px] font-bold uppercase tracking-tight text-white/50">
+                      Difficulty
+                    </p>
+                    <div class="mt-2 flex items-center justify-between gap-3">
+                      <div class="h-2 flex-1 rounded-full bg-white/10">
+                        <div class="h-2 w-[62%] rounded-full bg-glow-500"></div>
+                      </div>
+                      <span class="text-xs font-extrabold text-white/75">62%</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="grid gap-4 lg:grid-cols-3">
+                <div class="rounded-2xl border border-white/10 bg-ink-850/80 p-4">
+                  <div class="flex items-center justify-between gap-3">
+                    <p class="m-0 text-xs font-extrabold uppercase tracking-tight text-white/55">
+                      Receita (período)
+                    </p>
+                    <span class="rounded-full border border-glow-500/40 bg-glow-500/10 px-2 py-1 text-[11px] font-bold text-glow-500">
+                      +18%
+                    </span>
+                  </div>
+                  <p class="mt-3 font-grotesk text-3xl font-semibold tracking-tight text-glow-500">
+                    R$ 284.910
+                  </p>
+                  <p class="mt-1 text-xs text-white/55">Volume: 1.203 vendas</p>
+                </div>
+
+                <div class="rounded-2xl border border-white/10 bg-ink-850/80 p-4">
+                  <p class="m-0 text-xs font-extrabold uppercase tracking-tight text-white/55">
+                    Evolução diária
+                  </p>
+                  <div class="mt-3 h-24">
+                    <canvas id="lineChart"></canvas>
+                  </div>
+                </div>
+
+                <div class="rounded-2xl border border-white/10 bg-ink-850/80 p-4">
+                  <p class="m-0 text-xs font-extrabold uppercase tracking-tight text-white/55">
+                    Segmentação
+                  </p>
+                  <div class="mt-3 h-24">
+                    <canvas id="donutChart"></canvas>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <div class="arrow">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path
+                d="M12 5v14m0 0 6-6m-6 6-6-6"
+                stroke="rgba(255, 122, 47, .8)"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+          </div>
+
+          <section class="panel rounded-2xl border border-white/10 bg-ink-800/80 shadow-panel">
+            <div class="grid gap-4 p-4 sm:grid-cols-[220px_1fr] sm:p-5">
+              <div class="rounded-2xl border border-glow-500/40 bg-gradient-to-b from-glow-500/10 to-white/5 p-4 sm:p-5">
+                <div class="flex items-center gap-3">
+                  <div
+                    class="grid h-11 w-11 place-items-center rounded-xl border border-glow-500/50 bg-ink-950/70 text-glow-500 shadow-glow"
+                  >
+                    <i data-lucide="target" class="h-5 w-5"></i>
+                  </div>
+                  <div>
+                    <p class="m-0 font-grotesk text-sm font-semibold tracking-tight">OPTIMIZATION</p>
+                    <p class="m-0 text-xs text-white/55">Ações priorizadas</p>
+                  </div>
+                </div>
+                <div class="mt-4 space-y-2">
+                  <div class="rounded-xl border border-white/10 bg-white/5 p-3">
+                    <p class="m-0 text-[11px] font-bold uppercase tracking-tight text-white/50">
+                      Internal linking
+                    </p>
+                    <p class="mt-2 text-xs text-white/70">+14 links novos sugeridos</p>
+                  </div>
+                  <div class="rounded-xl border border-white/10 bg-white/5 p-3">
+                    <p class="m-0 text-[11px] font-bold uppercase tracking-tight text-white/50">
+                      Performance
+                    </p>
+                    <div class="mt-2 flex items-center justify-between gap-3">
+                      <span class="text-xs font-bold text-white/65">Speed Index</span>
+                      <span class="text-xs font-extrabold text-glow-500">2.1s</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="grid gap-4 lg:grid-cols-3">
+                <div class="rounded-2xl border border-white/10 bg-ink-850/80 p-4">
+                  <p class="m-0 text-xs font-extrabold uppercase tracking-tight text-white/55">
+                    Aderência SEO
+                  </p>
+                  <p class="mt-3 font-grotesk text-3xl font-semibold tracking-tight">86</p>
+                  <p class="mt-1 text-xs text-white/55">Pontuação do “doctor”</p>
+                </div>
+                <div class="rounded-2xl border border-white/10 bg-ink-850/80 p-4">
+                  <p class="m-0 text-xs font-extrabold uppercase tracking-tight text-white/55">
+                    Sitemap
+                  </p>
+                  <div class="mt-3 h-24 rounded-xl border border-white/10 bg-white/5 p-3">
+                    <div class="grid grid-cols-3 gap-2 text-xs text-white/60">
+                      <div class="rounded-lg bg-white/5 px-2 py-2 text-center">Home</div>
+                      <div class="rounded-lg bg-white/5 px-2 py-2 text-center">Vendas</div>
+                      <div class="rounded-lg bg-white/5 px-2 py-2 text-center">Estoque</div>
+                      <div class="rounded-lg bg-white/5 px-2 py-2 text-center">Fin.</div>
+                      <div class="rounded-lg bg-white/5 px-2 py-2 text-center">CR</div>
+                      <div class="rounded-lg bg-white/5 px-2 py-2 text-center">CP</div>
+                    </div>
+                  </div>
+                </div>
+                <div class="rounded-2xl border border-white/10 bg-ink-850/80 p-4">
+                  <p class="m-0 text-xs font-extrabold uppercase tracking-tight text-white/55">
+                    Resultados
+                  </p>
+                  <div class="mt-3 space-y-2">
+                    <div class="flex items-center justify-between rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs">
+                      <span class="font-bold text-white/65">Crescimento</span>
+                      <span class="font-extrabold text-glow-500">+23%</span>
+                    </div>
+                    <div class="flex items-center justify-between rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs">
+                      <span class="font-bold text-white/65">Ranking</span>
+                      <span class="font-extrabold text-glow-500">+11</span>
+                    </div>
+                    <div class="flex items-center justify-between rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs">
+                      <span class="font-bold text-white/65">Conversão</span>
+                      <span class="font-extrabold text-glow-500">3,4%</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+        </div>
+      </main>
+    </div>
+
+    <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+    <script>
+      lucide.createIcons();
+
+      const common = {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            backgroundColor: "rgba(10, 10, 10, .92)",
+            borderColor: "rgba(255, 122, 47, .35)",
+            borderWidth: 1,
+            titleColor: "rgba(255,255,255,.9)",
+            bodyColor: "rgba(255,255,255,.75)",
+          },
+        },
+        scales: {
+          x: {
+            ticks: { color: "rgba(255,255,255,.4)", font: { size: 10, weight: 700 } },
+            grid: { color: "rgba(255,255,255,.06)" },
+          },
+          y: {
+            ticks: { color: "rgba(255,255,255,.4)", font: { size: 10, weight: 700 } },
+            grid: { color: "rgba(255,255,255,.06)" },
+          },
+        },
+      };
+
+      const line = document.getElementById("lineChart");
+      new Chart(line, {
+        type: "line",
+        data: {
+          labels: ["D-6", "D-5", "D-4", "D-3", "D-2", "D-1"],
+          datasets: [
+            {
+              data: [28, 35, 32, 49, 44, 58],
+              borderColor: "#ff7a2f",
+              backgroundColor: "rgba(255, 122, 47, 0.14)",
+              fill: true,
+              tension: 0.35,
+              pointRadius: 3,
+              pointBackgroundColor: "#ff7a2f",
+            },
+          ],
+        },
+        options: common,
+      });
+
+      const donut = document.getElementById("donutChart");
+      new Chart(donut, {
+        type: "doughnut",
+        data: {
+          labels: ["PDV", "E-commerce", "Outros"],
+          datasets: [
+            {
+              data: [56, 34, 10],
+              backgroundColor: ["#ff7a2f", "rgba(255,255,255,.18)", "rgba(255,255,255,.08)"],
+              borderColor: "rgba(255,255,255,.08)",
+              borderWidth: 1,
+              hoverOffset: 4,
+            },
+          ],
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: { legend: { display: false } },
+          cutout: "62%",
+        },
+      });
+    </script>
+  </body>
+</html>
+

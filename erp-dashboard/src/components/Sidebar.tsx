@@ -35,14 +35,14 @@ export default function Sidebar() {
               key={item.path}
               to={item.path}
               className={({ isActive }) =>
-                `group flex items-center gap-3 rounded-lg border px-3 py-3 text-sm font-bold transition-colors ${
+                `group flex items-center gap-3 rounded-xl border px-3 py-3 text-sm font-bold transition-colors ${
                   isActive
-                    ? 'border-[var(--border-strong)] bg-[var(--accent-soft)] text-[var(--accent)]'
-                    : 'border-transparent text-[var(--text-secondary)] hover:border-[var(--border)] hover:bg-white/[0.04] hover:text-[var(--text-primary)]'
+                    ? 'border-[var(--border-strong)] bg-[var(--accent-soft)] text-[var(--accent)] shadow-[0_0_0_1px_rgba(255,122,47,0.18),0_10px_24px_rgba(0,0,0,0.35)]'
+                    : 'border-transparent text-[var(--text-secondary)] hover:border-[var(--border)] hover:bg-white/[0.05] hover:text-[var(--text-primary)]'
                 }`
               }
             >
-              <span className="grid h-7 w-7 place-items-center rounded-md border border-[var(--border)] text-[10px]">
+              <span className="grid h-7 w-7 place-items-center rounded-lg border border-[var(--border)] bg-white/[0.03] text-[10px]">
                 {item.code}
               </span>
               <span>{item.label}</span>

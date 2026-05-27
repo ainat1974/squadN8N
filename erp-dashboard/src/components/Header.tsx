@@ -40,7 +40,7 @@ export default function Header() {
       </div>
 
       <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
-        <div className="flex rounded-lg border border-[var(--border)] bg-black/30 p-1">
+        <div className="flex rounded-xl border border-[var(--border)] bg-black/30 p-1">
           {periods.map(p => (
             <button
               key={p}
