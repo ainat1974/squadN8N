@@ -138,14 +138,43 @@
     },
     {
       "parameters": {
-        "jsCode": "const staticData = $getWorkflowStaticData('global');\nconst ctx = $('Preparar Contexto').first().json;\nconst vendas = $('Transformar Vendas').first().json.dados;\n\nlet estoque = { gerado_em: new Date().toISOString(), summary: { total_skus: 0, skus_criticos: 0, skus_alerta: 0, valor_total_estoque: 0 }, linhas: [], saldo_dia: [] };\ntry {\n  estoque = $('Transformar Estoque').first().json.dados || estoque;\n} catch (e) {\n  console.log('Estoque nao coletado nesta execucao — seguindo com vendas apenas');\n}\nconst atualizadoEm = new Date().toISOString();\n\nif (!staticData.erp) staticData.erp = {};\n\nstaticData.erp.ultimaConsulta = {\n  dataInicial: ctx.dataInicial,\n  dataFinal: ctx.dataFinal,\n  atualizadoEm,\n  dataExecucao: ctx.dataHoje,\n  janelaColeta: ctx.janelaColeta,\n  vendas,\n  estoque\n};\n\nstaticData.erp.vendas = vendas;\nstaticData.erp.estoque = estoque;\nstaticData.erp.data = ctx.dataFinal;\nstaticData.erp.dataInicial = ctx.dataInicial;\nstaticData.erp.dataFinal = ctx.dataFinal;\nstaticData.erp.dataExecucao = ctx.dataHoje;\nstaticData.erp.janelaColeta = ctx.janelaColeta;\nstaticData.erp.atualizadoEm = atualizadoEm;\nstaticData.erp.ultimaColetaManual = atualizadoEm;\nstaticData.erp.fonteUltimaColeta = 'webhook';\n\nreturn [{ json: {\n  sucesso: true,\n  dataInicial: ctx.dataInicial,\n  dataFinal: ctx.dataFinal,\n  atualizadoEm,\n  resumo: vendas.summary,\n  total_skus: vendas.produtos_vendidos?.length || 0\n} }];"
+        "jsCode": "const ctx = $('Preparar Contexto').first().json;\nconst { baseUrl } = ctx;\nlet currentToken = ctx.token;\n\nconst sleep = (ms) => new Promise(r => setTimeout(r, ms));\n\nasync function refreshToken() {\n  const auth = await this.helpers.httpRequest({\n    method: 'POST',\n    url: baseUrl + '/autenticacao/v1/login',\n    headers: { 'Content-Type': 'application/json' },\n    body: { Empresa: $vars.DAPIC_EMPRESA, TokenIntegracao: $vars.DAPIC_TOKEN_INTEGRACAO },\n    json: true\n  });\n  if (!auth.access_token) throw new Error('Falha ao renovar token (financeiro)');\n  currentToken = auth.access_token;\n}\n\nasync function request(endpoint, params = {}, retry401 = true) {\n  const delays = [1000, 2000, 4000];\n  for (let i = 0; i <= delays.length; i++) {\n    try {\n      return await this.helpers.httpRequest({\n        method: 'GET',\n        url: baseUrl + endpoint,\n        headers: { Authorization: 'Bearer ' + currentToken },\n        qs: params,\n        json: true\n      });\n    } catch (err) {\n      const status = err.httpCode || err.statusCode || err.response?.statusCode;\n      if (status === 401 && retry401) {\n        await refreshToken.call(this);\n        return request.call(this, endpoint, params, false);\n      }\n      if ((status === 429 || status >= 500) && i < delays.length) {\n        await sleep(delays[i]);\n        continue;\n      }\n      throw err;\n    }\n  }\n}\n\nasync function fetchAll(endpoint, params = {}, maxPaginas = Infinity) {\n  const all = [];\n  let pagina = 1;\n  let totalPaginas = 1;\n  do {\n    const resp = await request.call(this, endpoint, { ...params, Pagina: pagina, RegistrosPorPagina: 200 });\n    if (Array.isArray(resp?.Dados)) all.push(...resp.Dados);\n    totalPaginas = Math.min(Number(resp?.TotalPaginas || 1), maxPaginas);\n    if (pagina < totalPaginas) await sleep(250);\n    pagina++;\n  } while (pagina <= totalPaginas);\n  return all;\n}\n\nfunction addDiasIso(iso, dias) {\n  const d = new Date(iso + 'T12:00:00');\n  d.setDate(d.getDate() + dias);\n  return d.toISOString().slice(0, 10);\n}\n\nconst hoje = ctx.dataHoje;\n\n// Contas a Receber: parcelas por VENCIMENTO (FiltrarPor=1) numa janela ampla\n// para aging (passado) + projecao (futuro). Teto de 40 paginas (~8k parcelas).\nconst recIni = addDiasIso(hoje, -120);\nconst recFim = addDiasIso(hoje, 60);\nlet parcelas = [];\ntry {\n  parcelas = await fetchAll.call(this, '/v1/contas/parcelas', { DataInicial: recIni, DataFinal: recFim, FiltrarPor: 1 }, 40);\n} catch (e) {\n  console.log('Parcelas (contas a receber) indisponivel: ' + (e.message || e));\n}\n\n// Entradas realizadas de caixa: pagamentos no intervalo escolhido (fallback 30d)\nconst pagIni = ctx.dataInicial || addDiasIso(hoje, -30);\nconst pagFim = ctx.dataFinal || hoje;\nlet pagamentos = [];\ntry {\n  pagamentos = await fetchAll.call(this, '/v1/contas/pagamentos', { DataInicial: pagIni, DataFinal: pagFim }, 40);\n} catch (e) {\n  console.log('Pagamentos (entradas) indisponivel: ' + (e.message || e));\n}\n\nreturn [{ json: { parcelas, pagamentos, hoje, recIni, recFim, pagIni, pagFim, coletadoEm: new Date().toISOString() } }];"
+      },
+      "id": "coletar-financeiro",
+      "name": "Coletar Financeiro",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2160,
+        400
+      ],
+      "continueOnFail": true,
+      "notes": "Contas a Receber (parcelas) + entradas (pagamentos); falha nao bloqueia vendas/estoque"
+    },
+    {
+      "parameters": {
+        "jsCode": "const fin = $('Coletar Financeiro').first().json;\nconst parcelas = fin.parcelas || [];\nconst pagamentos = fin.pagamentos || [];\nconst hoje = fin.hoje;\n\nconst toNum = (v) => Number(v || 0) || 0;\nconst round = (v) => Math.round((Number(v) || 0) * 100) / 100;\nconst diaDe = (s) => String(s || '').slice(0, 10);\nconst addDiasIso = (iso, dias) => { const d = new Date(iso + 'T12:00:00'); d.setDate(d.getDate() + dias); return d.toISOString().slice(0, 10); };\n// dias de atraso: >0 vencido, <0 ainda vai vencer\nconst atrasoDe = (venc) => {\n  const a = new Date(hoje + 'T00:00:00');\n  const b = new Date(diaDe(venc) + 'T00:00:00');\n  return Math.round((a - b) / 86400000);\n};\n\n// Parcelas em aberto (ignora canceladas; considera Aberta ou com ValorAberto > 0)\nconst abertas = parcelas.filter(p => {\n  const s = String(p.Status || '').toLowerCase();\n  if (s === 'cancelada' || s === 'perdida') return false;\n  return s === 'aberta' || toNum(p.ValorAberto) > 0;\n});\n\nlet total_aberto = 0, total_vencido = 0, total_a_vencer = 0;\nconst aging = { a_vencer: 0, d1_30: 0, d31_60: 0, d61_90: 0, d90_plus: 0 };\nconst porPessoa = new Map();\nconst vencidasArr = [];\nconst vencendo7dArr = [];\nconst projWeeks = [0, 0, 0, 0];\n\nfor (const p of abertas) {\n  const valor = toNum(p.ValorAberto || p.ValorFinal || p.Valor);\n  if (valor <= 0) continue;\n  const venc = diaDe(p.DataVencimento);\n  const atraso = atrasoDe(venc);\n  const pessoa = String(p.Pessoa || '').trim() || 'Cliente nao informado';\n  const reg = {\n    id: p.IdParcela,\n    cliente: pessoa,\n    pessoa,\n    valor: round(valor),\n    valor_aberto: round(valor),\n    data_vencimento: venc,\n    dias_atraso: atraso > 0 ? atraso : 0,\n    conta: p.Conta || null,\n    forma_pagamento: p.FormaPagamento || null\n  };\n  total_aberto += valor;\n\n  if (atraso > 0) {\n    total_vencido += valor;\n    vencidasArr.push(reg);\n    if (atraso <= 30) aging.d1_30 += valor;\n    else if (atraso <= 60) aging.d31_60 += valor;\n    else if (atraso <= 90) aging.d61_90 += valor;\n    else aging.d90_plus += valor;\n  } else {\n    total_a_vencer += valor;\n    aging.a_vencer += valor;\n    if (atraso >= -7) vencendo7dArr.push(reg);\n    const diasAteVencer = -atraso;\n    const wi = Math.floor(diasAteVencer / 7);\n    if (wi >= 0 && wi < 4) projWeeks[wi] += valor;\n  }\n\n  const acc = porPessoa.get(pessoa) || { cliente: pessoa, pessoa, valor: 0, vencido: 0 };\n  acc.valor += valor;\n  if (atraso > 0) acc.vencido += valor;\n  porPessoa.set(pessoa, acc);\n}\n\nvencidasArr.sort((a, b) => b.valor - a.valor);\nvencendo7dArr.sort((a, b) => a.data_vencimento.localeCompare(b.data_vencimento));\nconst top_devedores = Array.from(porPessoa.values())\n  .map(x => ({ ...x, valor: round(x.valor), vencido: round(x.vencido) }))\n  .sort((a, b) => b.vencido - a.vencido || b.valor - a.valor)\n  .slice(0, 10);\nconst total_vencendo_7d = vencendo7dArr.reduce((s, r) => s + r.valor, 0);\n\n// Entradas realizadas (pagamentos = recebimentos efetivados)\nlet pagamentos_realizados = 0;\nconst serieDia = new Map();\nfor (const pg of pagamentos) {\n  if (pg.Cancelado) continue;\n  const v = toNum(pg.ValorPago || pg.Valor);\n  if (v <= 0) continue;\n  pagamentos_realizados += v;\n  const d = diaDe(pg.DataPagamento);\n  serieDia.set(d, (serieDia.get(d) || 0) + v);\n}\nconst serie_entradas = Array.from(serieDia.entries())\n  .sort((a, b) => a[0].localeCompare(b[0]))\n  .map(([data, valor]) => ({ data, valor: round(valor) }));\n\nconst projecao_4_semanas = projWeeks.map((v, i) => ({\n  semana: 'Sem ' + (i + 1),\n  periodo: addDiasIso(hoje, i * 7) + '..' + addDiasIso(hoje, i * 7 + 6),\n  entradas_previstas: round(v),\n  saidas_previstas: 0,\n  saldo_semana: round(v)\n}));\n\nconst gerado_em = new Date().toISOString();\n\nconst contasReceber = {\n  gerado_em,\n  summary: {\n    total_aberto: round(total_aberto),\n    total_pendente: round(total_aberto),\n    total_vencido: round(total_vencido),\n    total_inadimplente: round(total_vencido),\n    total_a_vencer: round(total_a_vencer),\n    total_vencendo_7d: round(total_vencendo_7d),\n    saldo_liquido: round(pagamentos_realizados),\n    qt_aberto: abertas.length,\n    qt_vencido: vencidasArr.length\n  },\n  aging: {\n    a_vencer: round(aging.a_vencer),\n    d1_30: round(aging.d1_30),\n    d31_60: round(aging.d31_60),\n    d61_90: round(aging.d61_90),\n    d90_plus: round(aging.d90_plus)\n  },\n  vencidas: vencidasArr.slice(0, 50),\n  inadimplentes: vencidasArr.slice(0, 50),\n  vencendo_7d: vencendo7dArr.slice(0, 50),\n  recebendo_7d: vencendo7dArr.slice(0, 50),\n  top_devedores\n};\n\n// Contas a Pagar: nao disponivel nesta instancia da Dapic.\nconst contasPagar = {\n  gerado_em,\n  disponivel: false,\n  motivo: 'Dapic nao expoe contas a pagar/despesas classificadas nesta instancia (parcelas sem PlanoConta; /contas/pagamentos sao recebimentos de caixa).',\n  summary: { total_aberto: 0, total_pendente: 0, total_vencido: 0, total_pagamentos_d1: 0, total_pago: 0 },\n  vencidas: [],\n  vencidos: [],\n  vencendo_7d: []\n};\n\nconst fluxoCaixa = {\n  gerado_em,\n  summary: {\n    pagamentos_realizados: round(pagamentos_realizados),\n    aberto_previsto: round(total_aberto),\n    saldo: round(pagamentos_realizados - total_aberto)\n  },\n  projecao_4_semanas,\n  serie_entradas,\n  periodo_entradas: { inicio: fin.pagIni, fim: fin.pagFim }\n};\n\nreturn [{ json: { contasReceber, contasPagar, fluxoCaixa } }];"
+      },
+      "id": "transformar-financeiro",
+      "name": "Transformar Financeiro",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2400,
+        400
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const staticData = $getWorkflowStaticData('global');\nconst ctx = $('Preparar Contexto').first().json;\nconst vendas = $('Transformar Vendas').first().json.dados;\n\nlet estoque = { gerado_em: new Date().toISOString(), summary: { total_skus: 0, skus_criticos: 0, skus_alerta: 0, valor_total_estoque: 0 }, linhas: [], saldo_dia: [] };\ntry {\n  estoque = $('Transformar Estoque').first().json.dados || estoque;\n} catch (e) {\n  console.log('Estoque nao coletado nesta execucao — seguindo com vendas apenas');\n}\n\nlet financeiro = null;\ntry {\n  financeiro = $('Transformar Financeiro').first().json || null;\n} catch (e) {\n  console.log('Financeiro nao coletado nesta execucao — seguindo sem CR/fluxo');\n}\n\nconst atualizadoEm = new Date().toISOString();\n\nif (!staticData.erp) staticData.erp = {};\n\nstaticData.erp.ultimaConsulta = {\n  dataInicial: ctx.dataInicial,\n  dataFinal: ctx.dataFinal,\n  atualizadoEm,\n  dataExecucao: ctx.dataHoje,\n  janelaColeta: ctx.janelaColeta,\n  vendas,\n  estoque,\n  contasReceber: financeiro?.contasReceber || null,\n  contasPagar: financeiro?.contasPagar || null,\n  fluxoCaixa: financeiro?.fluxoCaixa || null\n};\n\nstaticData.erp.vendas = vendas;\nstaticData.erp.estoque = estoque;\nif (financeiro) {\n  staticData.erp.contasReceber = financeiro.contasReceber;\n  staticData.erp.contasPagar = financeiro.contasPagar;\n  staticData.erp.fluxoCaixa = financeiro.fluxoCaixa;\n  staticData.erp.financeiro = null;\n}\nstaticData.erp.data = ctx.dataFinal;\nstaticData.erp.dataInicial = ctx.dataInicial;\nstaticData.erp.dataFinal = ctx.dataFinal;\nstaticData.erp.dataExecucao = ctx.dataHoje;\nstaticData.erp.janelaColeta = ctx.janelaColeta;\nstaticData.erp.atualizadoEm = atualizadoEm;\nstaticData.erp.ultimaColetaManual = atualizadoEm;\nstaticData.erp.fonteUltimaColeta = 'webhook';\n\nreturn [{ json: {\n  sucesso: true,\n  dataInicial: ctx.dataInicial,\n  dataFinal: ctx.dataFinal,\n  atualizadoEm,\n  resumo: vendas.summary,\n  total_skus: vendas.produtos_vendidos?.length || 0\n} }];"
       },
       "id": "salvar-relatorio",
       "name": "Salvar Relatorio",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2160,
+        2640,
         400
       ]
     },
@@ -325,6 +354,28 @@
       "main": [
         [
           {
+            "node": "Coletar Financeiro",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Coletar Financeiro": {
+      "main": [
+        [
+          {
+            "node": "Transformar Financeiro",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transformar Financeiro": {
+      "main": [
+        [
+          {
             "node": "Salvar Relatorio",
             "type": "main",
             "index": 0
@@ -366,7 +417,7 @@
   "meta": {
     "version": "3.0.0",
     "scope": "range-on-demand",
-    "builtAt": "2026-05-28T23:24:31.500Z"
+    "builtAt": "2026-05-28T23:38:08.754Z"
   },
   "tags": [
     {

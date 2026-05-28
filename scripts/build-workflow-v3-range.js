@@ -399,6 +399,251 @@ const dados = {
 
 return [{ json: { modulo: 'estoque', dados } }];`;
 
+const COLETAR_FINANCEIRO = `const ctx = $('Preparar Contexto').first().json;
+const { baseUrl } = ctx;
+let currentToken = ctx.token;
+
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+async function refreshToken() {
+  const auth = await this.helpers.httpRequest({
+    method: 'POST',
+    url: baseUrl + '/autenticacao/v1/login',
+    headers: { 'Content-Type': 'application/json' },
+    body: { Empresa: $vars.DAPIC_EMPRESA, TokenIntegracao: $vars.DAPIC_TOKEN_INTEGRACAO },
+    json: true
+  });
+  if (!auth.access_token) throw new Error('Falha ao renovar token (financeiro)');
+  currentToken = auth.access_token;
+}
+
+async function request(endpoint, params = {}, retry401 = true) {
+  const delays = [1000, 2000, 4000];
+  for (let i = 0; i <= delays.length; i++) {
+    try {
+      return await this.helpers.httpRequest({
+        method: 'GET',
+        url: baseUrl + endpoint,
+        headers: { Authorization: 'Bearer ' + currentToken },
+        qs: params,
+        json: true
+      });
+    } catch (err) {
+      const status = err.httpCode || err.statusCode || err.response?.statusCode;
+      if (status === 401 && retry401) {
+        await refreshToken.call(this);
+        return request.call(this, endpoint, params, false);
+      }
+      if ((status === 429 || status >= 500) && i < delays.length) {
+        await sleep(delays[i]);
+        continue;
+      }
+      throw err;
+    }
+  }
+}
+
+async function fetchAll(endpoint, params = {}, maxPaginas = Infinity) {
+  const all = [];
+  let pagina = 1;
+  let totalPaginas = 1;
+  do {
+    const resp = await request.call(this, endpoint, { ...params, Pagina: pagina, RegistrosPorPagina: 200 });
+    if (Array.isArray(resp?.Dados)) all.push(...resp.Dados);
+    totalPaginas = Math.min(Number(resp?.TotalPaginas || 1), maxPaginas);
+    if (pagina < totalPaginas) await sleep(250);
+    pagina++;
+  } while (pagina <= totalPaginas);
+  return all;
+}
+
+function addDiasIso(iso, dias) {
+  const d = new Date(iso + 'T12:00:00');
+  d.setDate(d.getDate() + dias);
+  return d.toISOString().slice(0, 10);
+}
+
+const hoje = ctx.dataHoje;
+
+// Contas a Receber: parcelas por VENCIMENTO (FiltrarPor=1) numa janela ampla
+// para aging (passado) + projecao (futuro). Teto de 40 paginas (~8k parcelas).
+const recIni = addDiasIso(hoje, -120);
+const recFim = addDiasIso(hoje, 60);
+let parcelas = [];
+try {
+  parcelas = await fetchAll.call(this, '/v1/contas/parcelas', { DataInicial: recIni, DataFinal: recFim, FiltrarPor: 1 }, 40);
+} catch (e) {
+  console.log('Parcelas (contas a receber) indisponivel: ' + (e.message || e));
+}
+
+// Entradas realizadas de caixa: pagamentos no intervalo escolhido (fallback 30d)
+const pagIni = ctx.dataInicial || addDiasIso(hoje, -30);
+const pagFim = ctx.dataFinal || hoje;
+let pagamentos = [];
+try {
+  pagamentos = await fetchAll.call(this, '/v1/contas/pagamentos', { DataInicial: pagIni, DataFinal: pagFim }, 40);
+} catch (e) {
+  console.log('Pagamentos (entradas) indisponivel: ' + (e.message || e));
+}
+
+return [{ json: { parcelas, pagamentos, hoje, recIni, recFim, pagIni, pagFim, coletadoEm: new Date().toISOString() } }];`;
+
+const TRANSFORMAR_FINANCEIRO = `const fin = $('Coletar Financeiro').first().json;
+const parcelas = fin.parcelas || [];
+const pagamentos = fin.pagamentos || [];
+const hoje = fin.hoje;
+
+const toNum = (v) => Number(v || 0) || 0;
+const round = (v) => Math.round((Number(v) || 0) * 100) / 100;
+const diaDe = (s) => String(s || '').slice(0, 10);
+const addDiasIso = (iso, dias) => { const d = new Date(iso + 'T12:00:00'); d.setDate(d.getDate() + dias); return d.toISOString().slice(0, 10); };
+// dias de atraso: >0 vencido, <0 ainda vai vencer
+const atrasoDe = (venc) => {
+  const a = new Date(hoje + 'T00:00:00');
+  const b = new Date(diaDe(venc) + 'T00:00:00');
+  return Math.round((a - b) / 86400000);
+};
+
+// Parcelas em aberto (ignora canceladas; considera Aberta ou com ValorAberto > 0)
+const abertas = parcelas.filter(p => {
+  const s = String(p.Status || '').toLowerCase();
+  if (s === 'cancelada' || s === 'perdida') return false;
+  return s === 'aberta' || toNum(p.ValorAberto) > 0;
+});
+
+let total_aberto = 0, total_vencido = 0, total_a_vencer = 0;
+const aging = { a_vencer: 0, d1_30: 0, d31_60: 0, d61_90: 0, d90_plus: 0 };
+const porPessoa = new Map();
+const vencidasArr = [];
+const vencendo7dArr = [];
+const projWeeks = [0, 0, 0, 0];
+
+for (const p of abertas) {
+  const valor = toNum(p.ValorAberto || p.ValorFinal || p.Valor);
+  if (valor <= 0) continue;
+  const venc = diaDe(p.DataVencimento);
+  const atraso = atrasoDe(venc);
+  const pessoa = String(p.Pessoa || '').trim() || 'Cliente nao informado';
+  const reg = {
+    id: p.IdParcela,
+    cliente: pessoa,
+    pessoa,
+    valor: round(valor),
+    valor_aberto: round(valor),
+    data_vencimento: venc,
+    dias_atraso: atraso > 0 ? atraso : 0,
+    conta: p.Conta || null,
+    forma_pagamento: p.FormaPagamento || null
+  };
+  total_aberto += valor;
+
+  if (atraso > 0) {
+    total_vencido += valor;
+    vencidasArr.push(reg);
+    if (atraso <= 30) aging.d1_30 += valor;
+    else if (atraso <= 60) aging.d31_60 += valor;
+    else if (atraso <= 90) aging.d61_90 += valor;
+    else aging.d90_plus += valor;
+  } else {
+    total_a_vencer += valor;
+    aging.a_vencer += valor;
+    if (atraso >= -7) vencendo7dArr.push(reg);
+    const diasAteVencer = -atraso;
+    const wi = Math.floor(diasAteVencer / 7);
+    if (wi >= 0 && wi < 4) projWeeks[wi] += valor;
+  }
+
+  const acc = porPessoa.get(pessoa) || { cliente: pessoa, pessoa, valor: 0, vencido: 0 };
+  acc.valor += valor;
+  if (atraso > 0) acc.vencido += valor;
+  porPessoa.set(pessoa, acc);
+}
+
+vencidasArr.sort((a, b) => b.valor - a.valor);
+vencendo7dArr.sort((a, b) => a.data_vencimento.localeCompare(b.data_vencimento));
+const top_devedores = Array.from(porPessoa.values())
+  .map(x => ({ ...x, valor: round(x.valor), vencido: round(x.vencido) }))
+  .sort((a, b) => b.vencido - a.vencido || b.valor - a.valor)
+  .slice(0, 10);
+const total_vencendo_7d = vencendo7dArr.reduce((s, r) => s + r.valor, 0);
+
+// Entradas realizadas (pagamentos = recebimentos efetivados)
+let pagamentos_realizados = 0;
+const serieDia = new Map();
+for (const pg of pagamentos) {
+  if (pg.Cancelado) continue;
+  const v = toNum(pg.ValorPago || pg.Valor);
+  if (v <= 0) continue;
+  pagamentos_realizados += v;
+  const d = diaDe(pg.DataPagamento);
+  serieDia.set(d, (serieDia.get(d) || 0) + v);
+}
+const serie_entradas = Array.from(serieDia.entries())
+  .sort((a, b) => a[0].localeCompare(b[0]))
+  .map(([data, valor]) => ({ data, valor: round(valor) }));
+
+const projecao_4_semanas = projWeeks.map((v, i) => ({
+  semana: 'Sem ' + (i + 1),
+  periodo: addDiasIso(hoje, i * 7) + '..' + addDiasIso(hoje, i * 7 + 6),
+  entradas_previstas: round(v),
+  saidas_previstas: 0,
+  saldo_semana: round(v)
+}));
+
+const gerado_em = new Date().toISOString();
+
+const contasReceber = {
+  gerado_em,
+  summary: {
+    total_aberto: round(total_aberto),
+    total_pendente: round(total_aberto),
+    total_vencido: round(total_vencido),
+    total_inadimplente: round(total_vencido),
+    total_a_vencer: round(total_a_vencer),
+    total_vencendo_7d: round(total_vencendo_7d),
+    saldo_liquido: round(pagamentos_realizados),
+    qt_aberto: abertas.length,
+    qt_vencido: vencidasArr.length
+  },
+  aging: {
+    a_vencer: round(aging.a_vencer),
+    d1_30: round(aging.d1_30),
+    d31_60: round(aging.d31_60),
+    d61_90: round(aging.d61_90),
+    d90_plus: round(aging.d90_plus)
+  },
+  vencidas: vencidasArr.slice(0, 50),
+  inadimplentes: vencidasArr.slice(0, 50),
+  vencendo_7d: vencendo7dArr.slice(0, 50),
+  recebendo_7d: vencendo7dArr.slice(0, 50),
+  top_devedores
+};
+
+// Contas a Pagar: nao disponivel nesta instancia da Dapic.
+const contasPagar = {
+  gerado_em,
+  disponivel: false,
+  motivo: 'Dapic nao expoe contas a pagar/despesas classificadas nesta instancia (parcelas sem PlanoConta; /contas/pagamentos sao recebimentos de caixa).',
+  summary: { total_aberto: 0, total_pendente: 0, total_vencido: 0, total_pagamentos_d1: 0, total_pago: 0 },
+  vencidas: [],
+  vencidos: [],
+  vencendo_7d: []
+};
+
+const fluxoCaixa = {
+  gerado_em,
+  summary: {
+    pagamentos_realizados: round(pagamentos_realizados),
+    aberto_previsto: round(total_aberto),
+    saldo: round(pagamentos_realizados - total_aberto)
+  },
+  projecao_4_semanas,
+  serie_entradas,
+  periodo_entradas: { inicio: fin.pagIni, fim: fin.pagFim }
+};
+
+return [{ json: { contasReceber, contasPagar, fluxoCaixa } }];`;
+
 const SALVAR_RELATORIO = `const staticData = $getWorkflowStaticData('global');
 const ctx = $('Preparar Contexto').first().json;
 const vendas = $('Transformar Vendas').first().json.dados;
@@ -409,6 +654,14 @@ try {
 } catch (e) {
   console.log('Estoque nao coletado nesta execucao — seguindo com vendas apenas');
 }
+
+let financeiro = null;
+try {
+  financeiro = $('Transformar Financeiro').first().json || null;
+} catch (e) {
+  console.log('Financeiro nao coletado nesta execucao — seguindo sem CR/fluxo');
+}
+
 const atualizadoEm = new Date().toISOString();
 
 if (!staticData.erp) staticData.erp = {};
@@ -420,11 +673,20 @@ staticData.erp.ultimaConsulta = {
   dataExecucao: ctx.dataHoje,
   janelaColeta: ctx.janelaColeta,
   vendas,
-  estoque
+  estoque,
+  contasReceber: financeiro?.contasReceber || null,
+  contasPagar: financeiro?.contasPagar || null,
+  fluxoCaixa: financeiro?.fluxoCaixa || null
 };
 
 staticData.erp.vendas = vendas;
 staticData.erp.estoque = estoque;
+if (financeiro) {
+  staticData.erp.contasReceber = financeiro.contasReceber;
+  staticData.erp.contasPagar = financeiro.contasPagar;
+  staticData.erp.fluxoCaixa = financeiro.fluxoCaixa;
+  staticData.erp.financeiro = null;
+}
 staticData.erp.data = ctx.dataFinal;
 staticData.erp.dataInicial = ctx.dataInicial;
 staticData.erp.dataFinal = ctx.dataFinal;
@@ -652,12 +914,31 @@ const workflow = {
       position: [1920, 400],
     },
     {
+      parameters: { jsCode: COLETAR_FINANCEIRO },
+      id: 'coletar-financeiro',
+      name: 'Coletar Financeiro',
+      type: 'n8n-nodes-base.code',
+      typeVersion: 2,
+      position: [2160, 400],
+      continueOnFail: true,
+      notes: 'Contas a Receber (parcelas) + entradas (pagamentos); falha nao bloqueia vendas/estoque',
+    },
+    {
+      parameters: { jsCode: TRANSFORMAR_FINANCEIRO },
+      id: 'transformar-financeiro',
+      name: 'Transformar Financeiro',
+      type: 'n8n-nodes-base.code',
+      typeVersion: 2,
+      position: [2400, 400],
+      continueOnFail: true,
+    },
+    {
       parameters: { jsCode: SALVAR_RELATORIO },
       id: 'salvar-relatorio',
       name: 'Salvar Relatorio',
       type: 'n8n-nodes-base.code',
       typeVersion: 2,
-      position: [2160, 400],
+      position: [2640, 400],
     },
     {
       parameters: {},
@@ -748,6 +1029,12 @@ const workflow = {
       main: [[{ node: 'Transformar Estoque', type: 'main', index: 0 }]],
     },
     'Transformar Estoque': {
+      main: [[{ node: 'Coletar Financeiro', type: 'main', index: 0 }]],
+    },
+    'Coletar Financeiro': {
+      main: [[{ node: 'Transformar Financeiro', type: 'main', index: 0 }]],
+    },
+    'Transformar Financeiro': {
       main: [[{ node: 'Salvar Relatorio', type: 'main', index: 0 }]],
     },
     'API GET /erp': {
