@@ -1,25 +1,26 @@
 /**
- * Atalho de login com biometria (Face ID / Touch ID / Windows Hello / Android).
+ * Atalho de login com gerenciador de senhas + biometria.
  *
- * Estrategia: usar a Web Credential Management API (PasswordCredential) para
- * pedir ao gerenciador de senhas do navegador / SO que guarde as credenciais.
- * Quando o usuario volta, chamamos navigator.credentials.get() — o navegador
- * dispara o desbloqueio biometrico do dispositivo automaticamente em quem tiver
- * suporte (Chrome/Edge desktop com Windows Hello/Touch ID, Chrome Android,
- * Safari iOS via password autofill).
+ * Cobre Desktop e Mobile com a Web Credential Management API:
+ *   - Chrome / Edge no Windows: Windows Hello (digital, PIN, rosto)
+ *   - Chrome / Safari no macOS: Touch ID
+ *   - Chrome no Android: digital / face unlock
+ *   - Safari no iOS: Face ID / Touch ID via password autofill
  *
- * Em browsers sem PasswordCredential (Firefox / alguns Safari), os atributos
- * autocomplete do form ja garantem o "salvar senha" tradicional, que tambem
- * desbloqueia com biometria via gerenciador do SO.
+ * Em browsers sem PasswordCredential (Firefox, alguns Safari antigos),
+ * os atributos autocomplete do form ja garantem o "salvar senha" tradicional,
+ * que tambem desbloqueia com biometria via gerenciador do sistema operacional.
  */
 
 const PREF_KEY = 'tm-erp-biometric-enabled'
+const TRIED_KEY = 'tm-erp-biometric-prompted'
 
 type StoredCred = { id: string; password: string }
 
 declare global {
   interface Window {
     PasswordCredential?: typeof PasswordCredential
+    PublicKeyCredential?: typeof PublicKeyCredential
   }
   interface CredentialsContainer {
     store?(credential: Credential): Promise<Credential>
@@ -33,6 +34,23 @@ declare global {
 
 export function biometricSupported(): boolean {
   return typeof window !== 'undefined' && typeof window.PasswordCredential === 'function'
+}
+
+/**
+ * Verifica se o dispositivo tem authenticator de plataforma disponivel
+ * (Windows Hello configurado, Touch ID, biometria do celular).
+ * Util pra customizar o copy do botao no Desktop sem biometria.
+ */
+export async function platformAuthenticatorAvailable(): Promise<boolean> {
+  try {
+    const PKC = (window as Window).PublicKeyCredential
+    if (!PKC || typeof PKC.isUserVerifyingPlatformAuthenticatorAvailable !== 'function') {
+      return false
+    }
+    return await PKC.isUserVerifyingPlatformAuthenticatorAvailable()
+  } catch {
+    return false
+  }
 }
 
 export function biometricPreference(): boolean {
@@ -66,12 +84,21 @@ export async function rememberCredential(email: string, password: string, name?:
   }
 }
 
-export async function tryBiometricLogin(): Promise<StoredCred | null> {
+/**
+ * Busca credenciais salvas no gerenciador de senhas.
+ * - mediation 'silent': so devolve se o browser ja confia (sem mostrar UI).
+ *   Ideal para tentativa automatica no carregamento da pagina.
+ * - mediation 'optional': mostra UI de selecao se necessario, dispara biometria.
+ *   Ideal pra clique manual no botao "Entrar com biometria".
+ */
+export async function tryBiometricLogin(
+  mode: 'silent' | 'optional' = 'optional'
+): Promise<StoredCred | null> {
   if (!biometricSupported() || !navigator.credentials?.get) return null
   try {
     const cred = (await navigator.credentials.get({
       password: true,
-      mediation: 'optional',
+      mediation: mode,
     } as CredentialRequestOptions)) as (Credential & { password?: string; id?: string }) | null
     if (!cred || !('password' in cred) || !cred.password || !cred.id) return null
     return { id: cred.id, password: cred.password }
@@ -86,5 +113,24 @@ export async function preventAutoSilent() {
     await navigator.credentials?.preventSilentAccess?.()
   } catch {
     /* ignora */
+  }
+}
+
+/**
+ * Marca que ja tentamos prompt automatico nesta aba — evita reprompt em
+ * navegacoes internas. Usar antes de chamar tryBiometricLogin('optional')
+ * automatico.
+ */
+export function markPromptedThisSession() {
+  try {
+    sessionStorage.setItem(TRIED_KEY, '1')
+  } catch { /* ignora */ }
+}
+
+export function alreadyPromptedThisSession(): boolean {
+  try {
+    return sessionStorage.getItem(TRIED_KEY) === '1'
+  } catch {
+    return false
   }
 }

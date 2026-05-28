@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import {
   biometricSupported,
+  platformAuthenticatorAvailable,
   rememberCredential,
   tryBiometricLogin,
 } from '../lib/biometric'
@@ -20,6 +21,7 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false)
   const [erro, setErro] = useState<string | null>(null)
   const [info, setInfo] = useState<string | null>(null)
+  const [hasPlatformAuth, setHasPlatformAuth] = useState(false)
   const triedBiometric = useRef(false)
 
   useEffect(() => {
@@ -29,11 +31,17 @@ export default function LoginPage() {
   }, [navigate])
 
   useEffect(() => {
+    platformAuthenticatorAvailable().then(setHasPlatformAuth)
+  }, [])
+
+  useEffect(() => {
     if (triedBiometric.current) return
     triedBiometric.current = true
     if (!biometricSupported()) return
     ;(async () => {
-      const cred = await tryBiometricLogin()
+      // tentativa silenciosa: so loga se o browser tem credencial salva e
+      // pode entregar sem mostrar nenhuma UI. Sem popup chato no carregamento.
+      const cred = await tryBiometricLogin('silent')
       if (!cred) return
       await doLogin(cred.id, cred.password, false)
     })()
@@ -151,7 +159,9 @@ export default function LoginPage() {
       setErro('Seu navegador nao suporta este atalho. Use e-mail e senha.')
       return
     }
-    const cred = await tryBiometricLogin()
+    // Modo 'optional' aqui: o browser pode mostrar a UI de selecao e disparar
+    // Windows Hello / Touch ID / biometria.
+    const cred = await tryBiometricLogin('optional')
     if (!cred) {
       setErro('Nenhuma credencial salva neste dispositivo. Faca login uma vez para habilitar.')
       return
@@ -281,7 +291,16 @@ export default function LoginPage() {
                 className="h-4 w-4 rounded border-[var(--border)] bg-black/30 accent-[var(--accent)]"
               />
               <span className="text-xs text-[var(--text-secondary)]">
-                Lembrar deste dispositivo {biometricSupported() && '(usa Face ID / digital quando disponível)'}
+                Lembrar deste dispositivo
+                {biometricSupported() && (
+                  <span className="text-[var(--text-muted)]">
+                    {' '}
+                    ({hasPlatformAuth
+                      ? 'Windows Hello / Touch ID / biometria'
+                      : 'gerenciador de senhas do navegador'}
+                    )
+                  </span>
+                )}
               </span>
             </label>
 
@@ -313,7 +332,9 @@ export default function LoginPage() {
                   disabled={loading}
                   className="rounded-lg border border-[var(--border)] px-3 py-2 text-xs font-bold text-[var(--text-secondary)] hover:border-[var(--border-strong)] hover:text-[var(--accent)]"
                 >
-                  Entrar com biometria deste dispositivo
+                  {hasPlatformAuth
+                    ? 'Entrar com Windows Hello / Touch ID / biometria'
+                    : 'Entrar com credencial salva neste navegador'}
                 </button>
               )}
               <button
@@ -329,9 +350,13 @@ export default function LoginPage() {
           <div className="mt-6 grid gap-2 rounded-xl border border-[var(--border)] bg-white/[0.03] p-4">
             <p className="m-0 text-xs font-extrabold text-[var(--text-secondary)]">Como funciona</p>
             <p className="m-0 text-xs leading-relaxed text-[var(--text-muted)]">
-              No primeiro acesso, cadastre seu e-mail e senha. O dispositivo memoriza a credencial:
-              nas próximas vezes, basta autorizar com Face ID, digital ou Windows Hello (quando o
-              navegador/celular suportar). A sessão fica guardada com segurança via Supabase.
+              No primeiro acesso, cadastre seu e-mail e senha. O dispositivo memoriza a credencial
+              no gerenciador do navegador: nas próximas vezes, basta autorizar com{' '}
+              <strong className="text-[var(--text-secondary)]">Windows Hello</strong> /{' '}
+              <strong className="text-[var(--text-secondary)]">Touch ID</strong> /{' '}
+              <strong className="text-[var(--text-secondary)]">Face ID</strong> ou digital. A
+              sessão fica guardada com segurança via Supabase, válida em qualquer dispositivo (PC,
+              Mac, Android, iPhone).
             </p>
           </div>
         </div>
