@@ -1,3 +1,4 @@
+import { useMemo, useState } from 'react'
 import { Bar, Doughnut } from 'react-chartjs-2'
 import {
   Chart as ChartJS, CategoryScale, LinearScale, BarElement,
@@ -7,12 +8,19 @@ import { useErpData } from '../hooks/useErpData'
 import { api, formatBRL, formatDate, formatNum } from '../services/api'
 import { usePeriod } from '../context/PeriodContext'
 import { periodDays, periodLabel } from '../utils/period'
+import { formatReceitaBreakdown, formatVolumeBreakdown, getBreakdown } from '../utils/acumulado'
 import { EmptyState, LoadingBlock, MetricCard, PageHeader, Panel, StatusPill } from '../components/DashboardPrimitives'
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, ArcElement, Tooltip, Legend)
 
 export default function SalesPage() {
   const { period } = usePeriod()
+  const [estoqueFilters, setEstoqueFilters] = useState({
+    produto: '',
+    cor: '',
+    tamanho: '',
+    quantidadeMinima: '',
+  })
   const diasPeriodo = periodDays(period)
   const labelPeriodo = periodLabel(period)
   const { data, loading, error, refresh } = useErpData(
@@ -23,6 +31,9 @@ export default function SalesPage() {
   const response = data as any
   const d = response?.dados
   const summary = d?.summary || {}
+  const breakdown = getBreakdown(d)
+  const receitaDetail = formatReceitaBreakdown(breakdown, formatBRL) || 'PDV + B2B (acumulado)'
+  const volumeDetail = formatVolumeBreakdown(breakdown, formatNum) || 'registros de venda (acumulado)'
   const evolucao: any[] = d?.evolucao_diaria || []
   const produtosVendidos: any[] = d?.produtos_vendidos || d?.top_produtos || []
   const topProdutos: any[] = [...produtosVendidos]
@@ -33,8 +44,28 @@ export default function SalesPage() {
     }))
     .sort((a, b) => b.quantidade - a.quantidade)
     .slice(0, 10)
-  const estoqueLinhas: any[] = d?.estoque_top10_linhas || []
+  const estoqueLinhas: any[] = useMemo(() => d?.estoque_top10_linhas || [], [d?.estoque_top10_linhas])
   const estoquePorProduto: any[] = d?.estoque_top10 || []
+  const estoqueFiltrado = useMemo(() => {
+    const produto = estoqueFilters.produto.trim().toLowerCase()
+    const cor = estoqueFilters.cor.trim().toLowerCase()
+    const tamanho = estoqueFilters.tamanho.trim().toLowerCase()
+    const quantidadeMinima = Number(estoqueFilters.quantidadeMinima || 0)
+
+    return estoqueLinhas.filter((item) => {
+      const produtoTexto = `${item.produto || ''} ${item.codigo || ''}`.toLowerCase()
+      const corTexto = String(item.cor || '').toLowerCase()
+      const tamanhoTexto = String(item.tamanho || '').toLowerCase()
+      const quantidade = Number(item.quantidade || 0)
+
+      return (
+        (!produto || produtoTexto.includes(produto)) &&
+        (!cor || corTexto.includes(cor)) &&
+        (!tamanho || tamanhoTexto.includes(tamanho)) &&
+        (!quantidadeMinima || quantidade >= quantidadeMinima)
+      )
+    })
+  }, [estoqueFilters, estoqueLinhas])
   const periodo = d?.periodo
   const doughnutData = {
     labels: ['PDV', 'B2B'],
@@ -62,7 +93,7 @@ export default function SalesPage() {
       <PageHeader
         eyebrow="Relatorio de vendas"
         title="Vendas coletadas"
-        description="Leitura comercial baseada na coleta D-1 e no historico diario acumulado. Quando ha apenas um dia no historico, os periodos maiores preservam a mesma base demonstravel."
+        description="Cron 06h consolida ontem (D-1). O botao Atualizar incrementa com as vendas de hoje em tempo real. Os totais somam ontem + hoje ate a meia-noite."
         meta={
           <>
             <StatusPill tone="orange">{labelPeriodo}</StatusPill>
@@ -72,9 +103,9 @@ export default function SalesPage() {
       />
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-        <MetricCard label="Receita" value={loading ? '...' : formatBRL(summary.receita_total || 0)} detail="PDV + B2B" tone="orange" />
-        <MetricCard label="Volume" value={loading ? '...' : formatNum(summary.volume_vendas || 0)} detail="registros de venda" tone="blue" />
-        <MetricCard label="Ticket medio" value={loading ? '...' : formatBRL(summary.ticket_medio || 0)} detail="receita / volume" tone="green" />
+        <MetricCard label="Receita" value={loading ? '...' : formatBRL(summary.receita_total || 0)} detail={receitaDetail} tone="orange" />
+        <MetricCard label="Volume" value={loading ? '...' : formatNum(summary.volume_vendas || 0)} detail={volumeDetail} tone="blue" />
+        <MetricCard label="Ticket medio" value={loading ? '...' : formatBRL(summary.ticket_medio || 0)} detail="receita acumulada / volume" tone="green" />
       </div>
 
       <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-3">
@@ -124,7 +155,7 @@ export default function SalesPage() {
 
       <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-2">
         <Panel title="Top 10 produtos mais vendidos" subtitle="Ranking pela quantidade vendida no periodo">
-          <div className="p-4">
+          <div className="overflow-x-auto p-4">
             {loading ? <LoadingBlock /> : topProdutos.length > 0 ? (
               <table className="data-table">
                 <thead>
@@ -159,11 +190,11 @@ export default function SalesPage() {
           title="Estoque atual dos Top 10"
           subtitle={
             estoquePorProduto.length > 0
-              ? `${estoqueLinhas.length} variacoes em ${estoquePorProduto.length} produtos`
+              ? `${estoqueFiltrado.length} de ${estoqueLinhas.length} variacoes em ${estoquePorProduto.length} produtos`
               : 'Saldo por cor e tamanho'
           }
         >
-          <div className="max-h-[40rem] overflow-y-auto px-4 pb-4">
+          <div className="max-h-[40rem] overflow-auto px-4 pb-4">
             {loading ? <LoadingBlock /> : estoqueLinhas.length > 0 ? (
               <table className="data-table" style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
                 <thead>
@@ -173,9 +204,42 @@ export default function SalesPage() {
                     <th className="pt-4 text-center">Tamanho</th>
                     <th className="pt-4 text-right">Quantidade</th>
                   </tr>
+                  <tr className="[&>th]:sticky [&>th]:top-[41px] [&>th]:z-10 [&>th]:bg-[var(--bg-panel)] [&>th]:shadow-[inset_0_-1px_0_rgba(255,255,255,0.07)]">
+                    <th>
+                      <ColumnFilter
+                        label="Filtrar produto ou SKU"
+                        value={estoqueFilters.produto}
+                        onChange={(value) => setEstoqueFilters(current => ({ ...current, produto: value }))}
+                      />
+                    </th>
+                    <th>
+                      <ColumnFilter
+                        label="Filtrar cor"
+                        value={estoqueFilters.cor}
+                        onChange={(value) => setEstoqueFilters(current => ({ ...current, cor: value }))}
+                      />
+                    </th>
+                    <th>
+                      <ColumnFilter
+                        label="Filtrar tam."
+                        value={estoqueFilters.tamanho}
+                        onChange={(value) => setEstoqueFilters(current => ({ ...current, tamanho: value }))}
+                        align="center"
+                      />
+                    </th>
+                    <th>
+                      <ColumnFilter
+                        label="Min."
+                        value={estoqueFilters.quantidadeMinima}
+                        onChange={(value) => setEstoqueFilters(current => ({ ...current, quantidadeMinima: value }))}
+                        type="number"
+                        align="right"
+                      />
+                    </th>
+                  </tr>
                 </thead>
                 <tbody>
-                  {estoqueLinhas.map((item, index) => (
+                  {estoqueFiltrado.map((item, index) => (
                     <tr key={`${item.codigo}-${item.cor}-${item.tamanho}-${index}`}>
                       <td className="max-w-[260px]">
                         <div className="truncate font-bold text-[var(--text-primary)]">{item.produto}</div>
@@ -188,6 +252,13 @@ export default function SalesPage() {
                       <td className="text-right font-bold text-[var(--info)]">{formatNum(item.quantidade)}</td>
                     </tr>
                   ))}
+                  {estoqueFiltrado.length === 0 && (
+                    <tr>
+                      <td colSpan={4}>
+                        <EmptyState title="Nenhum item encontrado" detail="Ajuste os filtros para ampliar a busca." />
+                      </td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
             ) : <EmptyState title="Sem estoque na coleta" detail="O snapshot atual nao retornou variacoes para os top 10." />}
@@ -198,3 +269,30 @@ export default function SalesPage() {
   )
 }
 
+function ColumnFilter({
+  label,
+  value,
+  onChange,
+  type = 'text',
+  align = 'left',
+}: {
+  label: string
+  value: string
+  onChange: (value: string) => void
+  type?: 'text' | 'number'
+  align?: 'left' | 'center' | 'right'
+}) {
+  const alignClass = align === 'right' ? 'text-right' : align === 'center' ? 'text-center' : 'text-left'
+
+  return (
+    <input
+      aria-label={label}
+      className={`h-8 w-full rounded-md border border-[var(--border)] bg-black/30 px-2 text-xs normal-case text-[var(--text-primary)] outline-none transition focus:border-[var(--border-strong)] ${alignClass}`}
+      min={type === 'number' ? 0 : undefined}
+      placeholder={label}
+      type={type}
+      value={value}
+      onChange={(event) => onChange(event.target.value)}
+    />
+  )
+}

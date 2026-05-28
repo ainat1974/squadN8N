@@ -1,7 +1,7 @@
 import type { PeriodKey } from '../context/PeriodContext'
 
 export function periodLabel(period: PeriodKey) {
-  return period === '1d' ? 'D-1' : period
+  return period === '1d' ? 'Ontem + Hoje' : period
 }
 
 export function periodDays(period: PeriodKey) {

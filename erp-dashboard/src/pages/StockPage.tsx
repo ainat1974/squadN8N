@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useErpData } from '../hooks/useErpData'
 import { api, formatBRL, formatNum } from '../services/api'
 import { EmptyState, LoadingBlock, MetricCard, PageHeader, Panel, StatusPill } from '../components/DashboardPrimitives'
@@ -6,11 +6,45 @@ import { EmptyState, LoadingBlock, MetricCard, PageHeader, Panel, StatusPill } f
 export default function StockPage() {
   const { data, loading, error, refresh } = useErpData(api.estoque)
   const [grupoExpandido, setGrupoExpandido] = useState<string | null>(null)
+  const [listaFilters, setListaFilters] = useState({
+    grupo: '',
+    produto: '',
+    cor: '',
+    tamanho: '',
+    vendidoMinimo: '',
+    estoqueMinimo: '',
+  })
   const response = data as any
   const d = response?.dados
   const summary = d?.summary || {}
   const grupos: any[] = d?.grupos || []
-  const linhas: any[] = d?.linhas || []
+  const linhas: any[] = useMemo(() => d?.linhas || [], [d?.linhas])
+  const linhasFiltradas = useMemo(() => {
+    const grupo = listaFilters.grupo.trim().toLowerCase()
+    const produto = listaFilters.produto.trim().toLowerCase()
+    const cor = listaFilters.cor.trim().toLowerCase()
+    const tamanho = listaFilters.tamanho.trim().toLowerCase()
+    const vendidoMinimo = Number(listaFilters.vendidoMinimo || 0)
+    const estoqueMinimo = Number(listaFilters.estoqueMinimo || 0)
+
+    return linhas.filter((item) => {
+      const grupoTexto = String(item.grupo || '').toLowerCase()
+      const produtoTexto = `${item.produto || ''} ${item.codigo || ''}`.toLowerCase()
+      const corTexto = String(item.cor || '').toLowerCase()
+      const tamanhoTexto = String(item.tamanho || '').toLowerCase()
+      const vendidoHoje = Number(item.vendido_hoje || 0)
+      const estoqueAtual = Number(item.estoque || 0)
+
+      return (
+        (!grupo || grupoTexto.includes(grupo)) &&
+        (!produto || produtoTexto.includes(produto)) &&
+        (!cor || corTexto.includes(cor)) &&
+        (!tamanho || tamanhoTexto.includes(tamanho)) &&
+        (!vendidoMinimo || vendidoHoje >= vendidoMinimo) &&
+        (!estoqueMinimo || estoqueAtual >= estoqueMinimo)
+      )
+    })
+  }, [linhas, listaFilters])
 
   if (error) {
     return (
@@ -28,8 +62,8 @@ export default function StockPage() {
       <PageHeader
         eyebrow="Snapshot de estoque"
         title="Estoque dos grupos do Top 10"
-        description="Estoque atual dos produtos vendidos hoje cujos grupos contem ao menos um item do top 10 mais vendido. Permite ver, por familia, o saldo disponivel x venda do dia."
-        meta={<StatusPill tone="muted">Snapshot D-1</StatusPill>}
+        description="Atualizado no cron (ontem) e reforcado a cada clique em Atualizar com estoque ao vivo dos produtos vendidos hoje nos grupos do Top 10."
+        meta={<StatusPill tone="muted">Ultima coleta</StatusPill>}
       />
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
@@ -42,7 +76,7 @@ export default function StockPage() {
         <MetricCard
           label="Produtos"
           value={loading ? '...' : formatNum(summary.total_produtos || 0)}
-          detail="vendidos no D-1"
+          detail="vendidos na janela atual"
           tone="blue"
         />
         <MetricCard
@@ -123,26 +157,28 @@ export default function StockPage() {
                                   estoque: <span className="font-extrabold text-[var(--info)]">{formatNum(produto.estoque_total)}</span>
                                 </div>
                               </div>
-                              <table className="data-table mt-2">
-                                <thead>
-                                  <tr>
-                                    <th>Cor</th>
-                                    <th className="text-center">Tamanho</th>
-                                    <th className="text-right">Vendido hoje</th>
-                                    <th className="text-right">Estoque</th>
-                                  </tr>
-                                </thead>
-                                <tbody>
-                                  {(produto.variacoes || []).map((v: any, idx: number) => (
-                                    <tr key={`${v.cor}-${v.tamanho}-${idx}`}>
-                                      <td className="text-[var(--text-secondary)]">{v.cor || '-'}</td>
-                                      <td className="text-center font-bold text-[var(--text-primary)]">{v.tamanho || '-'}</td>
-                                      <td className="text-right text-[var(--text-secondary)]">{formatNum(v.vendido_hoje || 0)}</td>
-                                      <td className="text-right font-bold text-[var(--info)]">{formatNum(v.estoque || 0)}</td>
+                              <div className="overflow-x-auto">
+                                <table className="data-table mt-2">
+                                  <thead>
+                                    <tr>
+                                      <th>Cor</th>
+                                      <th className="text-center">Tamanho</th>
+                                      <th className="text-right">Vendido hoje</th>
+                                      <th className="text-right">Estoque</th>
                                     </tr>
-                                  ))}
-                                </tbody>
-                              </table>
+                                  </thead>
+                                  <tbody>
+                                    {(produto.variacoes || []).map((v: any, idx: number) => (
+                                      <tr key={`${v.cor}-${v.tamanho}-${idx}`}>
+                                        <td className="text-[var(--text-secondary)]">{v.cor || '-'}</td>
+                                        <td className="text-center font-bold text-[var(--text-primary)]">{v.tamanho || '-'}</td>
+                                        <td className="text-right text-[var(--text-secondary)]">{formatNum(v.vendido_hoje || 0)}</td>
+                                        <td className="text-right font-bold text-[var(--info)]">{formatNum(v.estoque || 0)}</td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
                             </div>
                           ))}
                         </div>
@@ -165,9 +201,9 @@ export default function StockPage() {
         <div className="mt-4 grid grid-cols-1 gap-4">
           <Panel
             title="Lista plana (todas as variacoes)"
-            subtitle={`${linhas.length} linhas - exportavel para conferencia operacional`}
+            subtitle={`${linhasFiltradas.length} de ${linhas.length} linhas - exportavel para conferencia operacional`}
           >
-            <div className="max-h-[40rem] overflow-y-auto px-4 pb-4">
+            <div className="max-h-[40rem] overflow-auto px-4 pb-4">
               <table className="data-table" style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
                 <thead>
                   <tr className="[&>th]:sticky [&>th]:top-0 [&>th]:z-10 [&>th]:bg-[var(--bg-panel)] [&>th]:shadow-[inset_0_-1px_0_rgba(255,255,255,0.07)]">
@@ -178,9 +214,58 @@ export default function StockPage() {
                     <th className="pt-4 text-right">Vendido</th>
                     <th className="pt-4 text-right">Estoque</th>
                   </tr>
+                  <tr className="[&>th]:sticky [&>th]:top-[41px] [&>th]:z-10 [&>th]:bg-[var(--bg-panel)] [&>th]:shadow-[inset_0_-1px_0_rgba(255,255,255,0.07)]">
+                    <th>
+                      <ColumnFilter
+                        label="Filtrar grupo"
+                        value={listaFilters.grupo}
+                        onChange={(value) => setListaFilters(current => ({ ...current, grupo: value }))}
+                      />
+                    </th>
+                    <th>
+                      <ColumnFilter
+                        label="Filtrar produto ou SKU"
+                        value={listaFilters.produto}
+                        onChange={(value) => setListaFilters(current => ({ ...current, produto: value }))}
+                      />
+                    </th>
+                    <th>
+                      <ColumnFilter
+                        label="Filtrar cor"
+                        value={listaFilters.cor}
+                        onChange={(value) => setListaFilters(current => ({ ...current, cor: value }))}
+                      />
+                    </th>
+                    <th>
+                      <ColumnFilter
+                        label="Tam."
+                        value={listaFilters.tamanho}
+                        onChange={(value) => setListaFilters(current => ({ ...current, tamanho: value }))}
+                        align="center"
+                      />
+                    </th>
+                    <th>
+                      <ColumnFilter
+                        label="Min."
+                        value={listaFilters.vendidoMinimo}
+                        onChange={(value) => setListaFilters(current => ({ ...current, vendidoMinimo: value }))}
+                        type="number"
+                        align="right"
+                      />
+                    </th>
+                    <th>
+                      <ColumnFilter
+                        label="Min."
+                        value={listaFilters.estoqueMinimo}
+                        onChange={(value) => setListaFilters(current => ({ ...current, estoqueMinimo: value }))}
+                        type="number"
+                        align="right"
+                      />
+                    </th>
+                  </tr>
                 </thead>
                 <tbody>
-                  {linhas.map((item, index) => (
+                  {linhasFiltradas.map((item, index) => (
                     <tr key={`${item.codigo}-${item.cor}-${item.tamanho}-${index}`}>
                       <td className="max-w-[200px] truncate text-[var(--text-secondary)]">{item.grupo}</td>
                       <td className="max-w-[260px]">
@@ -193,6 +278,13 @@ export default function StockPage() {
                       <td className="text-right font-bold text-[var(--info)]">{formatNum(item.estoque || 0)}</td>
                     </tr>
                   ))}
+                  {linhasFiltradas.length === 0 && (
+                    <tr>
+                      <td colSpan={6}>
+                        <EmptyState title="Nenhuma variacao encontrada" detail="Ajuste os filtros para ampliar a busca." />
+                      </td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
             </div>
@@ -200,5 +292,33 @@ export default function StockPage() {
         </div>
       )}
     </div>
+  )
+}
+
+function ColumnFilter({
+  label,
+  value,
+  onChange,
+  type = 'text',
+  align = 'left',
+}: {
+  label: string
+  value: string
+  onChange: (value: string) => void
+  type?: 'text' | 'number'
+  align?: 'left' | 'center' | 'right'
+}) {
+  const alignClass = align === 'right' ? 'text-right' : align === 'center' ? 'text-center' : 'text-left'
+
+  return (
+    <input
+      aria-label={label}
+      className={`h-8 w-full rounded-md border border-[var(--border)] bg-black/30 px-2 text-xs normal-case text-[var(--text-primary)] outline-none transition focus:border-[var(--border-strong)] ${alignClass}`}
+      min={type === 'number' ? 0 : undefined}
+      placeholder={label}
+      type={type}
+      value={value}
+      onChange={(event) => onChange(event.target.value)}
+    />
   )
 }

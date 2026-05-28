@@ -7,6 +7,7 @@ import { useErpData } from '../hooks/useErpData'
 import { api, formatBRL, formatDate, formatNum } from '../services/api'
 import { usePeriod } from '../context/PeriodContext'
 import { periodDays, periodLabel } from '../utils/period'
+import { formatReceitaBreakdown, formatVolumeBreakdown, getBreakdown } from '../utils/acumulado'
 import { EmptyState, LoadingBlock, MetricCard, PageHeader, Panel, StatusPill } from '../components/DashboardPrimitives'
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, LineElement, PointElement, Tooltip, Legend, Filler)
@@ -77,6 +78,10 @@ export default function OverviewPage() {
     .slice(0, 15)
   const recebendo7d: any[] = crData?.recebendo_7d?.slice(0, 5) || []
 
+  const breakdown = getBreakdown(r) || getBreakdown(vendasData)
+  const receitaDetail = formatReceitaBreakdown(breakdown, formatBRL)
+  const volumeDetail = formatVolumeBreakdown(breakdown, formatNum)
+
   const partialErrors = [resumo.error, vendas.error, estoque.error, contasReceber.error, fluxoCaixa.error].filter(Boolean)
   const loading = resumo.loading || vendas.loading
 
@@ -85,7 +90,7 @@ export default function OverviewPage() {
       <PageHeader
         eyebrow="ERP Dapic / Command Center"
         title="Visao Geral Executiva"
-        description="Demonstracao consolidada dos dados coletados no D-1. Vendas podem ser agregadas por periodo; estoque e financeiro representam o snapshot da ultima coleta diaria."
+        description="Cron 06h fecha ontem; Atualizar soma o que vende hoje em tempo real. Estoque e financeiro refletem a ultima coleta (preferencia ao vivo)."
         meta={
           <>
             <StatusPill tone="orange">{periodLabel(period)}</StatusPill>
@@ -105,15 +110,15 @@ export default function OverviewPage() {
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
         <MetricCard
-          label="Receita no periodo"
+          label="Receita acumulada"
           value={loading ? '...' : formatBRL(r?.receita_total || 0)}
-          detail={`${formatNum(r?.volume_vendas || 0)} vendas coletadas`}
+          detail={receitaDetail || `${formatNum(r?.volume_vendas || 0)} vendas no periodo`}
           tone="orange"
         />
         <MetricCard
           label="Ticket medio"
           value={loading ? '...' : formatBRL(r?.ticket_medio || 0)}
-          detail={`PDV ${formatBRL(r?.receita_pdv || 0)}`}
+          detail={volumeDetail || `PDV ${formatBRL(r?.receita_pdv || 0)}`}
           tone="green"
         />
         <MetricCard
@@ -183,7 +188,7 @@ export default function OverviewPage() {
 
       <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-2">
         <Panel title="Estoque em atencao" subtitle="Variações vendidas com menor cobertura">
-          <div className="p-4">
+          <div className="overflow-x-auto p-4">
             {estoque.loading ? <LoadingBlock /> : baixoEstoque.length > 0 ? (
               <table className="data-table">
                 <thead><tr><th>Produto</th><th>Variação</th><th className="text-right">Vendido</th><th className="text-right">Estoque</th></tr></thead>
@@ -203,7 +208,7 @@ export default function OverviewPage() {
         </Panel>
 
         <Panel title="Parcelas proximas" subtitle="Registros financeiros em aberto">
-          <div className="p-4">
+          <div className="overflow-x-auto p-4">
             {contasReceber.loading ? <LoadingBlock /> : recebendo7d.length > 0 ? (
               <table className="data-table">
                 <thead><tr><th>Pessoa</th><th className="text-right">Valor</th></tr></thead>

@@ -7,7 +7,7 @@ import { useRefresh } from '../context/RefreshContext'
 import { periodDays, periodLabel } from '../utils/period'
 import { StatusPill } from './DashboardPrimitives'
 
-const periods: PeriodKey[] = ['1d', '7d', '30d', '90d']
+const periods: PeriodKey[] = ['1d']
 
 type RefreshState = 'idle' | 'starting' | 'polling' | 'success' | 'timeout' | 'error'
 
@@ -79,6 +79,7 @@ export default function Header() {
       return
     }
     const baseAtualizadoEm = meta?.atualizadoEm as string | undefined
+    const baseManual = meta?.ultimaColetaManual as string | undefined
 
     setRefreshState('starting')
     try {
@@ -100,7 +101,11 @@ export default function Header() {
       try {
         const fresh = await api.resumo({ periodo: period, dias })
         const novoAt = (fresh as any)?.atualizadoEm
-        if (novoAt && novoAt !== baseAtualizadoEm) {
+        const novoManual = (fresh as any)?.ultimaColetaManual
+        const mudou =
+          (novoAt && novoAt !== baseAtualizadoEm) ||
+          (novoManual && novoManual !== baseManual)
+        if (mudou) {
           // Backend ja gravou nova coleta — propaga refresh global
           triggerRefresh()
           setRefreshState('success')
