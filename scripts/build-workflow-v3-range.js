@@ -295,32 +295,28 @@ async function request(endpoint, params = {}, retry401 = true) {
   }
 }
 
-async function fetchAll(endpoint, params = {}) {
+async function fetchAll(endpoint, params = {}, maxPaginas = Infinity) {
   const all = [];
   let pagina = 1;
   let totalPaginas = 1;
   do {
     const resp = await request.call(this, endpoint, { ...params, Pagina: pagina, RegistrosPorPagina: 200 });
     if (Array.isArray(resp?.Dados)) all.push(...resp.Dados);
-    totalPaginas = Number(resp?.TotalPaginas || 1);
+    totalPaginas = Math.min(Number(resp?.TotalPaginas || 1), maxPaginas);
     if (pagina < totalPaginas) await sleep(250);
     pagina++;
   } while (pagina <= totalPaginas);
   return all;
 }
 
+// Nesta instancia da Dapic apenas /v1/armazenadores/produtos responde.
+// /v1/estoques e /v1/estoques/todos retornam 404 (confirmado via probe).
+const MAX_PAGINAS_ESTOQUE = 60; // ~12k linhas: teto de seguranca contra runaway
 let estoqueAtual = [];
-const tentativas = [
-  ['/v1/estoques/todos', {}],
-  ['/v1/armazenadores/produtos', { SaldoZerado: true }],
-];
-for (const [endpoint, params] of tentativas) {
-  try {
-    estoqueAtual = await fetchAll.call(this, endpoint, params);
-    if (estoqueAtual.length) break;
-  } catch (err) {
-    console.log('Estoque indisponivel em ' + endpoint + ': ' + (err.message || err));
-  }
+try {
+  estoqueAtual = await fetchAll.call(this, '/v1/armazenadores/produtos', { SaldoZerado: true }, MAX_PAGINAS_ESTOQUE);
+} catch (err) {
+  console.log('Estoque indisponivel em /v1/armazenadores/produtos: ' + (err.message || err));
 }
 
 return [{ json: { estoqueAtual, coletadoEm: new Date().toISOString() } }];`;
@@ -330,23 +326,63 @@ const TRANSFORMAR_ESTOQUE = `const { estoqueAtual } = $('Coletar Estoque').first
 const toNum = (v) => Number(v || 0) || 0;
 const round = (v) => Math.round((Number(v) || 0) * 100) / 100;
 
-const linhas = (estoqueAtual || []).map(item => {
-  const estoque = toNum(item.Quantidade ?? item.estoque ?? item.Estoque ?? item.Saldo);
-  const vendido_hoje = toNum(item.VendidoHoje ?? item.vendido_hoje ?? item.Vendido ?? 0);
-  return {
-    codigo: item.CodigoProduto || item.codigo || item.Referencia || item.Sku || '',
-    produto: item.Produto || item.produto || item.Descricao || 'Produto',
-    cor: item.Cor || item.cor || null,
-    tamanho: item.Tamanho || item.tamanho || null,
-    estoque_atual: estoque,
-    vendido_hoje,
-    valor_unitario: toNum(item.ValorUnitario ?? item.valor_unitario ?? item.Preco)
-  };
-});
+// codigo vem embutido no Produto: "02038412076801 - BABY LOOK COTTON PREMIUM"
+const extrairCodigo = (produto) => {
+  const partes = String(produto || '').split(' - ');
+  return partes.length > 1 ? partes[0].trim() : '';
+};
+// nome limpo (sem o codigo na frente)
+const limparNome = (produto) => {
+  const partes = String(produto || '').split(' - ');
+  return partes.length > 1 ? partes.slice(1).join(' - ').trim() : String(produto || '').trim();
+};
+// cor "5377 - OFF" -> "OFF"
+const limparCor = (cor) => {
+  if (!cor) return null;
+  const partes = String(cor).split(' - ');
+  return partes.length > 1 ? partes.slice(1).join(' - ').trim() : String(cor).trim();
+};
+
+// 1) Mapa de vendas do periodo por variacao (IdProduto|Cor|Tamanho)
+const vendidoPorVariacao = new Map();
+try {
+  const raw = $('Coletar Vendas PDV').first().json.produtosVendidos || [];
+  for (const v of raw) {
+    const chave = [v.IdProduto, v.Cor, v.Tamanho].join('|');
+    vendidoPorVariacao.set(chave, (vendidoPorVariacao.get(chave) || 0) + toNum(v.Quantidade));
+  }
+} catch (e) {
+  // sem dados de vendas no fluxo: segue sem cruzar
+}
+
+// 2) Agrega estoque por variacao somando entre armazens
+const mapa = new Map();
+for (const item of (estoqueAtual || [])) {
+  const chave = [item.IdProduto, item.Cor, item.Tamanho].join('|');
+  const valorUnit = toNum(item.ValorCusto ?? item.ValorUnitario ?? item.Valor ?? item.Preco);
+  const atual = mapa.get(chave);
+  if (atual) {
+    atual.estoque_atual += toNum(item.Quantidade ?? item.QuantidadeReal ?? item.Saldo);
+    if (!atual.valor_unitario && valorUnit) atual.valor_unitario = valorUnit;
+  } else {
+    mapa.set(chave, {
+      codigo: extrairCodigo(item.Produto),
+      produto: limparNome(item.Produto) || 'Produto',
+      cor: limparCor(item.Cor),
+      tamanho: item.Tamanho != null ? String(item.Tamanho).trim() : null,
+      estoque_atual: toNum(item.Quantidade ?? item.QuantidadeReal ?? item.Saldo),
+      vendido_hoje: vendidoPorVariacao.get(chave) || 0,
+      valor_unitario: valorUnit
+    });
+  }
+}
+
+const linhas = Array.from(mapa.values()).sort((a, b) => b.vendido_hoje - a.vendido_hoje || a.estoque_atual - b.estoque_atual);
 
 const valor_total_estoque = linhas.reduce((acc, l) => acc + l.estoque_atual * l.valor_unitario, 0);
 const skus_criticos = linhas.filter(l => l.estoque_atual <= 2).length;
 const skus_alerta = linhas.filter(l => l.estoque_atual <= 5 && l.estoque_atual > 2).length;
+const total_vendido_hoje = linhas.reduce((acc, l) => acc + l.vendido_hoje, 0);
 
 const dados = {
   gerado_em: new Date().toISOString(),
@@ -354,6 +390,7 @@ const dados = {
     total_skus: linhas.length,
     skus_criticos,
     skus_alerta,
+    total_vendido_hoje: round(total_vendido_hoje),
     valor_total_estoque: round(valor_total_estoque)
   },
   linhas,
