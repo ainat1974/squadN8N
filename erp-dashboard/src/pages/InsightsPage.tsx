@@ -47,16 +47,16 @@ type Prioridade = (typeof prioridades)[number]
 export default function InsightsPage() {
   const { data, loading, error, refresh } = useErpData(api.insights)
   const [filtroAlerta, setFiltroAlerta] = useState<Prioridade>('todas')
-  const [filtroRec, setFiltroRec] = useState<Prioridade>('todas')
+  const [filtroRec] = useState<Prioridade>('todas')
   const [filtroTipoAlerta, setFiltroTipoAlerta] = useState<string>('todos')
   const [busca, setBusca] = useState('')
 
   const response = data as any
   const d = response?.dados
   const resumo: string = d?.resumo_executivo || ''
-  const destaques: Destaque[] = d?.destaques || []
-  const alertas: Alerta[] = d?.alertas || []
-  const recomendacoes: Recomendacao[] = d?.recomendacoes || []
+  const destaques: Destaque[] = useMemo(() => d?.destaques || [], [d?.destaques])
+  const alertas: Alerta[] = useMemo(() => d?.alertas || [], [d?.alertas])
+  const recomendacoes: Recomendacao[] = useMemo(() => d?.recomendacoes || [], [d?.recomendacoes])
   const contexto = d?.contexto || {}
   const geradoEm = d?.gerado_em ? new Date(d.gerado_em).toLocaleString('pt-BR') : null
   const modelo: string = d?.modelo || 'gpt-4o'

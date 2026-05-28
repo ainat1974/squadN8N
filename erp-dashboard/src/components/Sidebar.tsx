@@ -1,4 +1,6 @@
 import { NavLink, useNavigate } from 'react-router-dom'
+import { supabase } from '../lib/supabase'
+import { preventAutoSilent } from '../lib/biometric'
 
 const navItems = [
   { path: '/visao-geral', code: '01', label: 'Visao Geral' },
@@ -11,9 +13,9 @@ const navItems = [
 export default function Sidebar() {
   const navigate = useNavigate()
 
-  function handleLogout() {
-    sessionStorage.removeItem('auth_token')
-    sessionStorage.removeItem('user_info')
+  async function handleLogout() {
+    await supabase.auth.signOut()
+    await preventAutoSilent()
     navigate('/login')
   }
 

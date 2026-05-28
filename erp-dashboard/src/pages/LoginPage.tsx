@@ -1,35 +1,163 @@
-import { useGoogleLogin } from '@react-oauth/google'
+import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { supabase } from '../lib/supabase'
+import {
+  biometricSupported,
+  rememberCredential,
+  tryBiometricLogin,
+} from '../lib/biometric'
 
-const allowedEmails = (import.meta.env.VITE_ALLOWED_EMAILS || '')
-  .split(',')
-  .map((e: string) => e.trim().toLowerCase())
+type Tab = 'entrar' | 'cadastrar'
 
 export default function LoginPage() {
   const navigate = useNavigate()
+  const [tab, setTab] = useState<Tab>('entrar')
+  const [email, setEmail] = useState('')
+  const [senha, setSenha] = useState('')
+  const [senhaConfirmar, setSenhaConfirmar] = useState('')
+  const [nome, setNome] = useState('')
+  const [lembrar, setLembrar] = useState(true)
+  const [loading, setLoading] = useState(false)
+  const [erro, setErro] = useState<string | null>(null)
+  const [info, setInfo] = useState<string | null>(null)
+  const triedBiometric = useRef(false)
 
-  const login = useGoogleLogin({
-    onSuccess: async (tokenResponse) => {
-      try {
-        const res = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
-          headers: { Authorization: `Bearer ${tokenResponse.access_token}` },
-        })
-        const user = await res.json()
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => {
+      if (data.session) navigate('/visao-geral', { replace: true })
+    })
+  }, [navigate])
 
-        if (!allowedEmails.includes(user.email.toLowerCase())) {
-          alert('Acesso não autorizado para este e-mail.')
-          return
-        }
+  useEffect(() => {
+    if (triedBiometric.current) return
+    triedBiometric.current = true
+    if (!biometricSupported()) return
+    ;(async () => {
+      const cred = await tryBiometricLogin()
+      if (!cred) return
+      await doLogin(cred.id, cred.password, false)
+    })()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
-        sessionStorage.setItem('auth_token', tokenResponse.access_token)
-        sessionStorage.setItem('user_info', JSON.stringify(user))
-        navigate('/visao-geral')
-      } catch {
-        alert('Erro ao autenticar. Tente novamente.')
+  async function doLogin(emailArg: string, senhaArg: string, salvarBio: boolean) {
+    setErro(null)
+    setInfo(null)
+    setLoading(true)
+    try {
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: emailArg,
+        password: senhaArg,
+      })
+      if (error) throw error
+      if (salvarBio) {
+        await rememberCredential(emailArg, senhaArg, data.user?.user_metadata?.full_name)
       }
-    },
-    onError: () => alert('Falha no login com Google.'),
-  })
+      navigate('/visao-geral', { replace: true })
+    } catch (e: any) {
+      const msg = e?.message || 'Falha ao entrar'
+      if (/invalid login credentials/i.test(msg)) {
+        setErro('E-mail ou senha incorretos.')
+      } else if (/email not confirmed/i.test(msg)) {
+        setErro('E-mail ainda nao confirmado. Verifique sua caixa de entrada.')
+      } else {
+        setErro(msg)
+      }
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function handleEntrar(e: React.FormEvent) {
+    e.preventDefault()
+    if (!email || !senha) {
+      setErro('Preencha e-mail e senha.')
+      return
+    }
+    await doLogin(email, senha, lembrar)
+  }
+
+  async function handleCadastrar(e: React.FormEvent) {
+    e.preventDefault()
+    setErro(null)
+    setInfo(null)
+    if (!email || !senha) {
+      setErro('Preencha e-mail e senha.')
+      return
+    }
+    if (senha.length < 8) {
+      setErro('A senha precisa ter pelo menos 8 caracteres.')
+      return
+    }
+    if (senha !== senhaConfirmar) {
+      setErro('As senhas não conferem.')
+      return
+    }
+    setLoading(true)
+    try {
+      const { data, error } = await supabase.auth.signUp({
+        email,
+        password: senha,
+        options: {
+          data: { full_name: nome || null },
+          emailRedirectTo: window.location.origin + '/login',
+        },
+      })
+      if (error) throw error
+      if (data.session) {
+        if (lembrar) await rememberCredential(email, senha, nome)
+        navigate('/visao-geral', { replace: true })
+      } else {
+        setInfo('Cadastro criado. Verifique seu e-mail para confirmar e depois entre.')
+        setTab('entrar')
+      }
+    } catch (e: any) {
+      const msg = e?.message || 'Falha ao cadastrar'
+      if (/already registered/i.test(msg) || /user already/i.test(msg)) {
+        setErro('Este e-mail ja esta cadastrado. Use a aba "Entrar".')
+      } else if (/password should be at least/i.test(msg)) {
+        setErro('Senha muito curta. Use 8+ caracteres.')
+      } else {
+        setErro(msg)
+      }
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function handleEsqueci() {
+    setErro(null)
+    setInfo(null)
+    if (!email) {
+      setErro('Digite seu e-mail acima e clique em "Esqueci minha senha".')
+      return
+    }
+    setLoading(true)
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(email, {
+        redirectTo: window.location.origin + '/login',
+      })
+      if (error) throw error
+      setInfo('Enviamos um link de redefinicao para ' + email + '. Confira sua caixa de entrada.')
+    } catch (e: any) {
+      setErro(e?.message || 'Falha ao enviar e-mail de recuperacao')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function handleBiometriaManual() {
+    if (!biometricSupported()) {
+      setErro('Seu navegador nao suporta este atalho. Use e-mail e senha.')
+      return
+    }
+    const cred = await tryBiometricLogin()
+    if (!cred) {
+      setErro('Nenhuma credencial salva neste dispositivo. Faca login uma vez para habilitar.')
+      return
+    }
+    await doLogin(cred.id, cred.password, false)
+  }
 
   return (
     <div className="min-h-screen flex items-center justify-center px-4 py-10">
@@ -48,33 +176,162 @@ export default function LoginPage() {
               Command Center
             </p>
             <h1 className="mt-2 text-2xl font-extrabold text-[var(--text-primary)]">
-              Entrar para visualizar os painéis
+              {tab === 'entrar' ? 'Entrar para visualizar os painéis' : 'Criar acesso'}
             </h1>
-            <p className="mt-2 text-sm leading-relaxed text-[var(--text-secondary)]">
-              Autenticação com Google e acesso restrito por lista de e-mails autorizados.
-            </p>
           </div>
 
-          <button
-            onClick={() => login()}
-            className="mt-7 w-full rounded-xl border border-[var(--border)] bg-white text-black/80 font-extrabold py-3 px-4 transition-colors hover:bg-white/90"
+          <div className="mt-6 grid grid-cols-2 gap-1 rounded-xl border border-[var(--border)] bg-white/[0.03] p-1">
+            <button
+              onClick={() => { setTab('entrar'); setErro(null); setInfo(null) }}
+              className={`rounded-lg py-2 text-xs font-extrabold transition-colors ${
+                tab === 'entrar'
+                  ? 'bg-[var(--accent-soft)] text-[var(--accent)]'
+                  : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'
+              }`}
+            >
+              Entrar
+            </button>
+            <button
+              onClick={() => { setTab('cadastrar'); setErro(null); setInfo(null) }}
+              className={`rounded-lg py-2 text-xs font-extrabold transition-colors ${
+                tab === 'cadastrar'
+                  ? 'bg-[var(--accent-soft)] text-[var(--accent)]'
+                  : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'
+              }`}
+            >
+              Cadastrar
+            </button>
+          </div>
+
+          <form
+            onSubmit={tab === 'entrar' ? handleEntrar : handleCadastrar}
+            className="mt-5 space-y-3"
+            autoComplete="on"
           >
-            <span className="flex items-center justify-center gap-3 text-sm">
-              <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
-                <path fill="#4285F4" d="M16.51 8H8.98v3h4.3c-.18 1-.74 1.48-1.6 2.04v2.01h2.6a7.8 7.8 0 0 0 2.38-5.88c0-.57-.05-.66-.15-1.18z"/>
-                <path fill="#34A853" d="M8.98 17c2.16 0 3.97-.72 5.3-1.94l-2.6-2a4.8 4.8 0 0 1-7.18-2.54H1.83v2.07A8 8 0 0 0 8.98 17z"/>
-                <path fill="#FBBC05" d="M4.5 10.52a4.8 4.8 0 0 1 0-3.04V5.41H1.83a8 8 0 0 0 0 7.18z"/>
-                <path fill="#EA4335" d="M8.98 4.18c1.17 0 2.23.4 3.06 1.2l2.3-2.3A8 8 0 0 0 1.83 5.4L4.5 7.49a4.77 4.77 0 0 1 4.48-3.3z"/>
-              </svg>
-              Entrar com Google
-            </span>
-          </button>
+            {tab === 'cadastrar' && (
+              <div>
+                <label className="text-[11px] font-extrabold uppercase tracking-tight text-[var(--text-muted)]">
+                  Nome (opcional)
+                </label>
+                <input
+                  type="text"
+                  value={nome}
+                  onChange={e => setNome(e.target.value)}
+                  autoComplete="name"
+                  className="mt-1 w-full rounded-lg border border-[var(--border)] bg-black/30 px-3 py-2 text-sm text-[var(--text-primary)] focus:border-[var(--accent)] focus:outline-none"
+                  placeholder="Seu nome"
+                />
+              </div>
+            )}
+
+            <div>
+              <label className="text-[11px] font-extrabold uppercase tracking-tight text-[var(--text-muted)]">
+                E-mail
+              </label>
+              <input
+                type="email"
+                value={email}
+                onChange={e => setEmail(e.target.value)}
+                autoComplete="username"
+                required
+                className="mt-1 w-full rounded-lg border border-[var(--border)] bg-black/30 px-3 py-2 text-sm text-[var(--text-primary)] focus:border-[var(--accent)] focus:outline-none"
+                placeholder="voce@empresa.com"
+              />
+            </div>
+
+            <div>
+              <label className="text-[11px] font-extrabold uppercase tracking-tight text-[var(--text-muted)]">
+                Senha {tab === 'cadastrar' && <span className="text-[var(--text-muted)]">(min. 8 caracteres)</span>}
+              </label>
+              <input
+                type="password"
+                value={senha}
+                onChange={e => setSenha(e.target.value)}
+                autoComplete={tab === 'entrar' ? 'current-password' : 'new-password'}
+                required
+                minLength={tab === 'cadastrar' ? 8 : undefined}
+                className="mt-1 w-full rounded-lg border border-[var(--border)] bg-black/30 px-3 py-2 text-sm text-[var(--text-primary)] focus:border-[var(--accent)] focus:outline-none"
+                placeholder="••••••••"
+              />
+            </div>
+
+            {tab === 'cadastrar' && (
+              <div>
+                <label className="text-[11px] font-extrabold uppercase tracking-tight text-[var(--text-muted)]">
+                  Confirmar senha
+                </label>
+                <input
+                  type="password"
+                  value={senhaConfirmar}
+                  onChange={e => setSenhaConfirmar(e.target.value)}
+                  autoComplete="new-password"
+                  required
+                  minLength={8}
+                  className="mt-1 w-full rounded-lg border border-[var(--border)] bg-black/30 px-3 py-2 text-sm text-[var(--text-primary)] focus:border-[var(--accent)] focus:outline-none"
+                  placeholder="••••••••"
+                />
+              </div>
+            )}
+
+            <label className="flex cursor-pointer items-center gap-2 pt-1">
+              <input
+                type="checkbox"
+                checked={lembrar}
+                onChange={e => setLembrar(e.target.checked)}
+                className="h-4 w-4 rounded border-[var(--border)] bg-black/30 accent-[var(--accent)]"
+              />
+              <span className="text-xs text-[var(--text-secondary)]">
+                Lembrar deste dispositivo {biometricSupported() && '(usa Face ID / digital quando disponível)'}
+              </span>
+            </label>
+
+            {erro && (
+              <div className="rounded-lg border border-[var(--danger)]/40 bg-[var(--danger)]/10 px-3 py-2 text-xs text-[var(--danger)]">
+                {erro}
+              </div>
+            )}
+            {info && (
+              <div className="rounded-lg border border-[var(--success)]/40 bg-[var(--success)]/10 px-3 py-2 text-xs text-[var(--success)]">
+                {info}
+              </div>
+            )}
+
+            <button
+              type="submit"
+              disabled={loading}
+              className="mt-2 w-full rounded-xl bg-[var(--accent)] px-4 py-3 text-sm font-extrabold text-black transition-colors hover:bg-[var(--accent)]/90 disabled:opacity-60"
+            >
+              {loading ? 'Aguarde…' : tab === 'entrar' ? 'Entrar' : 'Criar acesso'}
+            </button>
+          </form>
+
+          {tab === 'entrar' && (
+            <div className="mt-4 flex flex-col gap-2 text-center">
+              {biometricSupported() && (
+                <button
+                  onClick={handleBiometriaManual}
+                  disabled={loading}
+                  className="rounded-lg border border-[var(--border)] px-3 py-2 text-xs font-bold text-[var(--text-secondary)] hover:border-[var(--border-strong)] hover:text-[var(--accent)]"
+                >
+                  Entrar com biometria deste dispositivo
+                </button>
+              )}
+              <button
+                onClick={handleEsqueci}
+                disabled={loading}
+                className="text-xs font-bold text-[var(--text-muted)] hover:text-[var(--accent)]"
+              >
+                Esqueci minha senha
+              </button>
+            </div>
+          )}
 
           <div className="mt-6 grid gap-2 rounded-xl border border-[var(--border)] bg-white/[0.03] p-4">
-            <p className="m-0 text-xs font-extrabold text-[var(--text-secondary)]">Dica</p>
+            <p className="m-0 text-xs font-extrabold text-[var(--text-secondary)]">Como funciona</p>
             <p className="m-0 text-xs leading-relaxed text-[var(--text-muted)]">
-              Se o login falhar, confira as variáveis <span className="font-bold text-[var(--text-secondary)]">VITE_ALLOWED_EMAILS</span> e
-              <span className="font-bold text-[var(--text-secondary)]"> VITE_GOOGLE_CLIENT_ID</span>.
+              No primeiro acesso, cadastre seu e-mail e senha. O dispositivo memoriza a credencial:
+              nas próximas vezes, basta autorizar com Face ID, digital ou Windows Hello (quando o
+              navegador/celular suportar). A sessão fica guardada com segurança via Supabase.
             </p>
           </div>
         </div>
