@@ -7,25 +7,26 @@ import {
 import { useErpData } from '../hooks/useErpData'
 import { api, formatBRL, formatDate, formatNum } from '../services/api'
 import { usePeriod } from '../context/PeriodContext'
-import { periodDays, periodLabel } from '../utils/period'
+import { buildApiOptions, formatRangeLabel } from '../utils/period'
 import { formatReceitaBreakdown, formatVolumeBreakdown, getBreakdown } from '../utils/acumulado'
 import { EmptyState, LoadingBlock, MetricCard, PageHeader, Panel, StatusPill } from '../components/DashboardPrimitives'
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, ArcElement, Tooltip, Legend)
 
 export default function SalesPage() {
-  const { period } = usePeriod()
+  const { range } = usePeriod()
   const [estoqueFilters, setEstoqueFilters] = useState({
     produto: '',
     cor: '',
     tamanho: '',
     quantidadeMinima: '',
   })
-  const diasPeriodo = periodDays(period)
-  const labelPeriodo = periodLabel(period)
+  const fetchOptions = buildApiOptions(range)
+  const labelPeriodo = formatRangeLabel(range.dataInicial, range.dataFinal)
+  const rangeKey = `${range.dataInicial}|${range.dataFinal}`
   const { data, loading, error, refresh } = useErpData(
-    () => api.vendas({ periodo: period, dias: diasPeriodo }),
-    [period],
+    () => api.vendas(fetchOptions),
+    [rangeKey],
   )
 
   const response = data as any

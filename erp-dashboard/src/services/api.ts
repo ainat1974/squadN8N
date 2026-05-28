@@ -2,23 +2,23 @@
 // services/api.ts — Serviço de dados ERP via N8N webhooks
 // ============================================================
 
-// URL base: sempre aponta para o webhook N8N direto
-// Ignora VITE_API_URL que pode ter path extra (ex: /api) causando URL errada
 const N8N_HOST = 'https://workflows.tmrodrigues.tech'
 const BASE_URL = N8N_HOST
 
 export interface FetchModuloOptions {
-  periodo?: string
+  dataInicial?: string
+  dataFinal?: string
   dias?: number
 }
 
 async function fetchModulo(modulo: string, options: FetchModuloOptions = {}) {
   const params = new URLSearchParams({ modulo })
-  if (options.periodo) params.set('periodo', options.periodo)
+  if (options.dataInicial) params.set('dataInicial', options.dataInicial)
+  if (options.dataFinal) params.set('dataFinal', options.dataFinal)
   if (options.dias) params.set('dias', String(options.dias))
 
   const res = await fetch(`${BASE_URL}/webhook/erp?${params.toString()}`, {
-    headers: { 'Accept': 'application/json' }
+    headers: { Accept: 'application/json' },
   })
   if (!res.ok) throw new Error(`Erro ao buscar ${modulo}: ${res.status}`)
   const json = await res.json()
@@ -26,6 +26,20 @@ async function fetchModulo(modulo: string, options: FetchModuloOptions = {}) {
     throw new Error(json.error || `Dados indisponiveis para ${modulo}`)
   }
   return json
+}
+
+/** Dispara coleta sob demanda no N8N (sem cron). */
+export async function triggerColeta(dataInicial: string, dataFinal: string) {
+  const webhookUrl = import.meta.env.VITE_N8N_WEBHOOK_URL as string | undefined
+  if (!webhookUrl) {
+    throw new Error('VITE_N8N_WEBHOOK_URL nao configurada')
+  }
+  const res = await fetch(webhookUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ dataInicial, dataFinal }),
+  })
+  if (!res.ok) throw new Error(`Falha ao iniciar coleta: ${res.status}`)
 }
 
 export const api = {
@@ -38,12 +52,10 @@ export const api = {
   fluxoCaixa: (options?: FetchModuloOptions) => fetchModulo('fluxo-caixa', options),
 }
 
-// Formatar moeda pt-BR
 export function formatBRL(value: number): string {
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value)
 }
 
-// Formatar data pt-BR
 export function formatDate(iso: string): string {
   if (!iso) return '—'
   if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) {
@@ -53,7 +65,6 @@ export function formatDate(iso: string): string {
   return new Date(iso).toLocaleDateString('pt-BR')
 }
 
-// Formatar número
 export function formatNum(value: number, decimals = 0): string {
   return new Intl.NumberFormat('pt-BR', { maximumFractionDigits: decimals }).format(value)
 }

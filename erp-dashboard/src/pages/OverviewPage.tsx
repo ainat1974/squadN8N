@@ -6,9 +6,11 @@ import {
 import { useErpData } from '../hooks/useErpData'
 import { api, formatBRL, formatDate, formatNum } from '../services/api'
 import { usePeriod } from '../context/PeriodContext'
-import { periodDays, periodLabel } from '../utils/period'
+import { buildApiOptions, formatRangeLabel } from '../utils/period'
 import { formatReceitaBreakdown, formatVolumeBreakdown, getBreakdown } from '../utils/acumulado'
 import { EmptyState, LoadingBlock, MetricCard, PageHeader, Panel, StatusPill } from '../components/DashboardPrimitives'
+import DateRangePicker from '../components/DateRangePicker'
+import { useTriggerColeta } from '../hooks/useTriggerColeta'
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, LineElement, PointElement, Tooltip, Legend, Filler)
 
@@ -23,32 +25,41 @@ const chartBase = {
 }
 
 export default function OverviewPage() {
-  const { period } = usePeriod()
-  const diasPeriodo = periodDays(period)
-  const requestOptions = { periodo: period, dias: diasPeriodo }
+  const { range } = usePeriod()
+  const { state: coletaState, run: runColeta, isBusy: coletaBusy } = useTriggerColeta()
+  const fetchOptions = buildApiOptions(range)
+  const rangeKey = `${range.dataInicial}|${range.dataFinal}`
 
-  const resumo = useErpData(() => api.resumo(requestOptions), [period])
-  const vendas = useErpData(() => api.vendas(requestOptions), [period])
-  const estoque = useErpData(() => api.estoque(requestOptions), [period])
-  const contasReceber = useErpData(() => api.contasReceber(requestOptions), [period])
-  const fluxoCaixa = useErpData(() => api.fluxoCaixa(requestOptions), [period])
+  const resumo = useErpData(() => api.resumo(fetchOptions), [rangeKey])
+  const vendas = useErpData(() => api.vendas(fetchOptions), [rangeKey])
+  const estoque = useErpData(() => api.estoque(fetchOptions), [rangeKey])
+  const contasReceber = useErpData(() => api.contasReceber(fetchOptions), [rangeKey])
+  const fluxoCaixa = useErpData(() => api.fluxoCaixa(fetchOptions), [rangeKey])
 
-  const r = resumo.data as any
-  const vendasData = (vendas.data as any)?.dados
-  const estoqueData = (estoque.data as any)?.dados
-  const crData = (contasReceber.data as any)?.dados
-  const fluxoData = (fluxoCaixa.data as any)?.dados
+  const r = resumo.data as Record<string, unknown> | null
+  const vendasData = (vendas.data as { dados?: Record<string, unknown> })?.dados
+  const estoqueData = (estoque.data as { dados?: Record<string, unknown> })?.dados
+  const crData = (contasReceber.data as { dados?: Record<string, unknown> })?.dados
+  const fluxoData = (fluxoCaixa.data as { dados?: Record<string, unknown> })?.dados
 
-  const topProdutos: any[] = (vendasData?.top_produtos || vendasData?.produtos_vendidos || [])
-    .map((item: any) => ({
-      ...item,
-      quantidade: Number(item.quantidade || 0),
-      valor_total: Number(item.valor_total || item.receita || 0),
-    }))
-    .sort((a: any, b: any) => b.valor_total - a.valor_total)
+  const topProdutos: Array<Record<string, unknown>> = (
+    (vendasData?.top_produtos as unknown[]) ||
+    (vendasData?.produtos_vendidos as unknown[]) ||
+    []
+  )
+    .map((item: unknown) => {
+      const row = item as Record<string, unknown>
+      return {
+        ...row,
+        quantidade: Number(row.quantidade || 0),
+        valor_total: Number(row.valor_total || row.receita || 0),
+      }
+    })
+    .sort((a, b) => (b.valor_total as number) - (a.valor_total as number))
     .slice(0, 6)
-  const fluxo = fluxoData?.projecao_4_semanas || []
-  const fluxoResumo = fluxoData?.summary || {}
+
+  const fluxo = (fluxoData?.projecao_4_semanas as unknown[]) || []
+  const fluxoResumo = (fluxoData?.summary as Record<string, number>) || {}
   const saldoFinanceiro = Number(
     r?.saldo_liquido ||
     fluxoResumo.saldo ||
@@ -60,23 +71,27 @@ export default function OverviewPage() {
     Number(fluxoResumo.aberto_previsto ?? 0),
   ]
   const fluxoFinanceiroTemResumo = fluxoFinanceiroValores.some(value => value > 0)
-  const linhasEstoque: any[] = estoqueData?.linhas || estoqueData?.saldo_dia || []
+  const linhasEstoque: Array<Record<string, unknown>> =
+    (estoqueData?.linhas as Array<Record<string, unknown>>) ||
+    (estoqueData?.saldo_dia as Array<Record<string, unknown>>) ||
+    []
   const baixoEstoque = linhasEstoque
-    .map((item: any) => ({
+    .map((item) => ({
       ...item,
       estoque_atual: Number(item.estoque_atual ?? item.estoque ?? item.quantidade ?? 0),
       vendido_hoje: Number(item.vendido_hoje || 0),
       produto: item.produto || item.Produto || 'Produto nao informado',
       detalhe: [item.cor, item.tamanho].filter(Boolean).join(' / '),
     }))
-    .filter((item: any) => item.vendido_hoje > 0 || item.estoque_atual <= 5)
-    .sort((a: any, b: any) => {
+    .filter((item) => item.vendido_hoje > 0 || item.estoque_atual <= 5)
+    .sort((a, b) => {
       const scoreA = a.estoque_atual - (a.vendido_hoje * 2)
       const scoreB = b.estoque_atual - (b.vendido_hoje * 2)
       return scoreA - scoreB
     })
     .slice(0, 15)
-  const recebendo7d: any[] = crData?.recebendo_7d?.slice(0, 5) || []
+  const recebendo7d: Array<Record<string, unknown>> =
+    (crData?.recebendo_7d as Array<Record<string, unknown>>)?.slice(0, 5) || []
 
   const breakdown = getBreakdown(r) || getBreakdown(vendasData)
   const receitaDetail = formatReceitaBreakdown(breakdown, formatBRL)
@@ -84,26 +99,62 @@ export default function OverviewPage() {
 
   const partialErrors = [resumo.error, vendas.error, estoque.error, contasReceber.error, fluxoCaixa.error].filter(Boolean)
   const loading = resumo.loading || vendas.loading
+  const periodoConsultado = r?.periodo as { inicio?: string; fim?: string } | undefined
+  const labelConsulta =
+    periodoConsultado?.inicio && periodoConsultado?.fim
+      ? formatRangeLabel(periodoConsultado.inicio, periodoConsultado.fim)
+      : formatRangeLabel(range.dataInicial, range.dataFinal)
 
   return (
     <div className="pb-20 md:pb-0">
       <PageHeader
         eyebrow="ERP Dapic / Command Center"
         title="Visao Geral Executiva"
-        description="Cron 06h fecha ontem; Atualizar soma o que vende hoje em tempo real. Estoque e financeiro refletem a ultima coleta (preferencia ao vivo)."
+        description="Defina o intervalo, clique em Atualizar para coletar no Dapic e visualizar. Estoque permanece snapshot da ultima coleta."
         meta={
           <>
-            <StatusPill tone="orange">{periodLabel(period)}</StatusPill>
-            {r?.data && <StatusPill tone="muted">Base {formatDate(r.data)}</StatusPill>}
-            {partialErrors.length > 0 && <StatusPill tone="red">{partialErrors.length} alerta(s)</StatusPill>}
+            <StatusPill tone="orange">{labelConsulta}</StatusPill>
+            {r?.atualizadoEm && (
+              <StatusPill tone="muted">
+                Coletado {formatDate(String(r.atualizadoEm))}
+              </StatusPill>
+            )}
+            {partialErrors.length > 0 && (
+              <StatusPill tone="red">{partialErrors.length} alerta(s)</StatusPill>
+            )}
           </>
         }
       />
 
+      <div className="mb-4">
+        <DateRangePicker
+          showAtualizar
+          onAtualizar={() => runColeta(r?.atualizadoEm as string | undefined)}
+          atualizando={coletaBusy}
+        />
+        {coletaState === 'error' && (
+          <p className="mt-2 text-sm text-[var(--danger)]">
+            Falha ao iniciar coleta. Verifique VITE_N8N_WEBHOOK_URL e o workflow no N8N.
+          </p>
+        )}
+        {coletaState === 'timeout' && (
+          <p className="mt-2 text-sm text-[var(--danger)]">
+            Coleta demorou mais que o esperado. Tente novamente ou reduza o intervalo.
+          </p>
+        )}
+        {!r?.receita_total && !loading && !resumo.error && (
+          <p className="mt-2 text-sm text-[var(--text-muted)]">
+            Sem dados para este intervalo. Clique em Atualizar para coletar no ERP.
+          </p>
+        )}
+      </div>
+
       {partialErrors.length > 0 && (
         <Panel title="Alertas de dados" subtitle="Alguns modulos retornaram erro ou ainda nao foram coletados." className="mb-4">
           <div className="p-4 text-sm text-[var(--text-secondary)]">
-            {partialErrors.map((error, index) => <p key={index} className="m-0 py-1">{error}</p>)}
+            {partialErrors.map((error, index) => (
+              <p key={index} className="m-0 py-1">{error}</p>
+            ))}
           </div>
         </Panel>
       )}
@@ -111,32 +162,32 @@ export default function OverviewPage() {
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
         <MetricCard
           label="Receita acumulada"
-          value={loading ? '...' : formatBRL(r?.receita_total || 0)}
-          detail={receitaDetail || `${formatNum(r?.volume_vendas || 0)} vendas no periodo`}
+          value={loading ? '...' : formatBRL(Number(r?.receita_total || 0))}
+          detail={receitaDetail || `${formatNum(Number(r?.volume_vendas || 0))} vendas no periodo`}
           tone="orange"
         />
         <MetricCard
           label="Ticket medio"
-          value={loading ? '...' : formatBRL(r?.ticket_medio || 0)}
-          detail={volumeDetail || `PDV ${formatBRL(r?.receita_pdv || 0)}`}
+          value={loading ? '...' : formatBRL(Number(r?.ticket_medio || 0))}
+          detail={volumeDetail || `PDV ${formatBRL(Number(r?.receita_pdv || 0))}`}
           tone="green"
         />
         <MetricCard
           label="Estoque monitorado"
-          value={estoque.loading ? '...' : formatNum(estoqueData?.summary?.total_skus || linhasEstoque.length || 0)}
-          detail={`${formatNum(r?.skus_criticos || 0)} criticos / ${formatNum(r?.skus_alerta || 0)} alerta`}
+          value={estoque.loading ? '...' : formatNum(Number((estoqueData?.summary as Record<string, number>)?.total_skus || linhasEstoque.length || 0))}
+          detail={`${formatNum(Number(r?.skus_criticos || 0))} criticos / ${formatNum(Number(r?.skus_alerta || 0))} alerta · snapshot`}
           tone="blue"
         />
         <MetricCard
           label="Saldo CR - CP"
           value={(resumo.loading || fluxoCaixa.loading) ? '...' : formatBRL(saldoFinanceiro)}
-          detail={r?.saldo_liquido ? 'CR - CP retornado pelo ERP' : 'Pagos D-1 - parcelas abertas'}
+          detail={r?.saldo_liquido ? 'CR - CP retornado pelo ERP' : 'Pagos - parcelas abertas'}
           tone={saldoFinanceiro >= 0 ? 'green' : 'red'}
         />
       </div>
 
       <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-2">
-        <Panel title="Produtos de maior receita" subtitle={`Ranking do ${periodLabel(period)} por valor vendido`}>
+        <Panel title="Produtos de maior receita" subtitle={`Ranking de ${labelConsulta}`}>
           <div className="h-72 p-4">
             {vendas.loading ? <LoadingBlock height="h-full" /> : topProdutos.length > 0 ? (
               <Bar
@@ -144,14 +195,19 @@ export default function OverviewPage() {
                   labels: topProdutos.map(item => String(item.produto || '').slice(0, 22)),
                   datasets: [{
                     label: 'Receita',
-                    data: topProdutos.map(item => item.valor_total),
+                    data: topProdutos.map(item => item.valor_total as number),
                     backgroundColor: '#ff7a2f',
                     borderRadius: 5,
                   }],
                 }}
-                options={chartBase as any}
+                options={chartBase as object}
               />
-            ) : <EmptyState title="Sem produtos vendidos" detail="A coleta D-1 nao retornou produtos para ranquear." />}
+            ) : (
+              <EmptyState
+                title="Sem produtos no periodo"
+                detail="Atualize para coletar vendas do intervalo selecionado."
+              />
+            )}
           </div>
         </Panel>
 
@@ -160,7 +216,7 @@ export default function OverviewPage() {
             {fluxoCaixa.loading ? <LoadingBlock height="h-full" /> : fluxoFinanceiroTemResumo ? (
               <Bar
                 data={{
-                  labels: ['Pagamentos D-1', 'Parcelas abertas'],
+                  labels: ['Pagamentos', 'Parcelas abertas'],
                   datasets: [{
                     label: 'Valor',
                     data: fluxoFinanceiroValores,
@@ -168,42 +224,44 @@ export default function OverviewPage() {
                     borderRadius: 5,
                   }],
                 }}
-                options={{ ...chartBase, plugins: { legend: { display: false } } } as any}
+                options={{ ...chartBase, plugins: { legend: { display: false } } } as object}
               />
             ) : fluxo.length > 0 ? (
               <Bar
                 data={{
-                  labels: fluxo.map((item: any) => item.semana),
+                  labels: (fluxo as Array<Record<string, unknown>>).map(item => String(item.semana)),
                   datasets: [
-                    { label: 'Entradas', data: fluxo.map((item: any) => item.entradas_previstas), backgroundColor: '#42d392', borderRadius: 4 },
-                    { label: 'Saidas', data: fluxo.map((item: any) => item.saidas_previstas), backgroundColor: '#ff5f57', borderRadius: 4 },
+                    { label: 'Entradas', data: (fluxo as Array<Record<string, unknown>>).map(item => Number(item.entradas_previstas)), backgroundColor: '#42d392', borderRadius: 4 },
+                    { label: 'Saidas', data: (fluxo as Array<Record<string, unknown>>).map(item => Number(item.saidas_previstas)), backgroundColor: '#ff5f57', borderRadius: 4 },
                   ],
                 }}
-                options={{ ...chartBase, plugins: { legend: { labels: { color: '#b7b7b7' } } } } as any}
+                options={{ ...chartBase, plugins: { legend: { labels: { color: '#b7b7b7' } } } } as object}
               />
-            ) : <EmptyState title="Sem movimentacao financeira no D-1" detail="A coleta funcionou, mas nao retornou parcelas financeiras para demonstrar fluxo." />}
+            ) : (
+              <EmptyState title="Sem movimentacao financeira" detail="Modulo financeiro ainda nao retornou dados para o periodo." />
+            )}
           </div>
         </Panel>
       </div>
 
       <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-2">
-        <Panel title="Estoque em atencao" subtitle="Variações vendidas com menor cobertura">
+        <Panel title="Estoque em atencao" subtitle="Snapshot atual (nao filtra por periodo)">
           <div className="overflow-x-auto p-4">
             {estoque.loading ? <LoadingBlock /> : baixoEstoque.length > 0 ? (
               <table className="data-table">
                 <thead><tr><th>Produto</th><th>Variação</th><th className="text-right">Vendido</th><th className="text-right">Estoque</th></tr></thead>
                 <tbody>
                   {baixoEstoque.map((item, index) => (
-                    <tr key={`${item.codigo}-${index}`}>
-                      <td className="max-w-[260px] truncate">{item.produto}</td>
-                      <td className="max-w-[140px] truncate text-[var(--text-muted)]">{item.detalhe || '-'}</td>
-                      <td className="text-right text-[var(--text-secondary)]">{formatNum(item.vendido_hoje)}</td>
-                      <td className="text-right font-bold text-[var(--accent)]">{formatNum(item.estoque_atual)}</td>
+                    <tr key={`${String(item.codigo)}-${index}`}>
+                      <td className="max-w-[260px] truncate">{String(item.produto)}</td>
+                      <td className="max-w-[140px] truncate text-[var(--text-muted)]">{String(item.detalhe || '-')}</td>
+                      <td className="text-right text-[var(--text-secondary)]">{formatNum(Number(item.vendido_hoje))}</td>
+                      <td className="text-right font-bold text-[var(--accent)]">{formatNum(Number(item.estoque_atual))}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
-            ) : <EmptyState title="Sem estoque para listar" detail="O modulo de estoque ainda nao retornou variações demonstraveis." />}
+            ) : <EmptyState title="Sem estoque para listar" detail="O modulo de estoque ainda nao retornou variações." />}
           </div>
         </Panel>
 
@@ -214,14 +272,14 @@ export default function OverviewPage() {
                 <thead><tr><th>Pessoa</th><th className="text-right">Valor</th></tr></thead>
                 <tbody>
                   {recebendo7d.map((item, index) => (
-                    <tr key={`${item.id || item.id_parcela || item.id_conta}-${index}`}>
-                      <td className="max-w-[320px] truncate">{item.cliente || item.pessoa || 'Pessoa nao informada'}</td>
-                      <td className="text-right font-bold text-[var(--success)]">{formatBRL(item.valor ?? item.valor_aberto ?? 0)}</td>
+                    <tr key={`${String(item.id || item.id_parcela || item.id_conta)}-${index}`}>
+                      <td className="max-w-[320px] truncate">{String(item.cliente || item.pessoa || 'Pessoa nao informada')}</td>
+                      <td className="text-right font-bold text-[var(--success)]">{formatBRL(Number(item.valor ?? item.valor_aberto ?? 0))}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
-            ) : <EmptyState title="Sem parcelas proximas" detail="A coleta nao retornou parcelas em aberto para a janela atual." />}
+            ) : <EmptyState title="Sem parcelas proximas" detail="A coleta nao retornou parcelas em aberto." />}
           </div>
         </Panel>
       </div>

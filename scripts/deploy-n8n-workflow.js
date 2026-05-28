@@ -9,7 +9,7 @@ if (!apiUrl || !apiKey || apiKey.includes('SEU_N8N')) {
   throw new Error('N8N API URL/key nao configurados em .mcp.json');
 }
 
-const workflowPath = 'squads/n8n-erp-dashboard/output/workflow-n8n-otimizado.json';
+const workflowPath = process.argv[2] || 'squads/n8n-erp-dashboard/output/workflow-n8n-otimizado.json';
 const workflow = JSON.parse(fs.readFileSync(workflowPath, 'utf8'));
 const credentialsPath = 'squads/n8n-erp-dashboard/_memory/credentials.md';
 
@@ -97,6 +97,8 @@ async function main() {
     'Tech Malhas — Coleta ERP Dapic',
     'Tech Malhas - Coleta ERP Dapic',
     'Tech Malhas - Coleta ERP Dapic Otimizado',
+    'Tech Malhas - ERP Dashboard (Range v3)',
+    'Tech Malhas - Relatorio Vendas PDV (D-1)',
   ];
 
   const existing = workflows.find(item => candidates.includes(item.name));

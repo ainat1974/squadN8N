@@ -1,34 +1,51 @@
-// ============================================================
-// PeriodContext — compartilha período selecionado no Header
-// com todas as páginas via React Context
-// ============================================================
-import { createContext, useContext, useState } from 'react'
+import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from 'react'
+import {
+  clampRange,
+  presetToRange,
+  todayInSaoPaulo,
+  daysInRange,
+  type DateRange,
+  type DateRangePreset,
+} from '../utils/dateRange'
 
-export type PeriodKey = '1d' | '7d' | '30d' | '90d'
-
-export const PERIOD_DAYS: Record<PeriodKey, number> = {
-  '1d': 1,
-  '7d': 7,
-  '30d': 30,
-  '90d': 90,
-}
+export type { DateRange, DateRangePreset }
 
 interface PeriodContextType {
-  period: PeriodKey
-  setPeriod: (p: PeriodKey) => void
+  range: DateRange
+  setRange: (range: DateRange) => void
+  applyPreset: (preset: DateRangePreset) => void
   days: number
 }
 
 const PeriodContext = createContext<PeriodContextType>({
-  period: '1d',
-  setPeriod: () => {},
+  range: { dataInicial: '', dataFinal: '' },
+  setRange: () => {},
+  applyPreset: () => {},
   days: 1,
 })
 
-export function PeriodProvider({ children }: { children: React.ReactNode }) {
-  const [period, setPeriod] = useState<PeriodKey>('1d')
+export function PeriodProvider({ children }: { children: ReactNode }) {
+  const hoje = todayInSaoPaulo()
+  const [range, setRangeState] = useState<DateRange>(() => ({
+    dataInicial: hoje,
+    dataFinal: hoje,
+  }))
+
+  const setRange = useCallback((next: DateRange) => {
+    setRangeState(clampRange(next))
+  }, [])
+
+  const applyPreset = useCallback((preset: DateRangePreset) => {
+    setRangeState(clampRange(presetToRange(preset)))
+  }, [])
+
+  const days = useMemo(
+    () => daysInRange(range.dataInicial, range.dataFinal),
+    [range.dataInicial, range.dataFinal],
+  )
+
   return (
-    <PeriodContext.Provider value={{ period, setPeriod, days: PERIOD_DAYS[period] }}>
+    <PeriodContext.Provider value={{ range, setRange, applyPreset, days }}>
       {children}
     </PeriodContext.Provider>
   )

@@ -94,6 +94,23 @@ button, input, select {
   color: var(--accent);
 }
 
+.date-input {
+  height: 34px;
+  min-width: 148px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.45);
+  color: var(--text-primary);
+  color-scheme: dark;
+}
+
+.date-input:focus {
+  outline: none;
+  border-color: var(--border-strong);
+  box-shadow: 0 0 0 1px rgba(255, 122, 47, 0.25);
+}
+
 .action-button {
   height: 34px;
   border-radius: 6px;
