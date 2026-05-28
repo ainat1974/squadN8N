@@ -1,7 +1,11 @@
 // ============================================================
-// hooks/useErpData.ts — Hook genérico para buscar dados do ERP
+// hooks/useErpData.ts — Hook generico para buscar dados do ERP
+//
+// Reage automaticamente a refresh global disparado pelo botao
+// Atualizar (RefreshContext.triggerRefresh).
 // ============================================================
 import { useState, useEffect } from 'react'
+import { useRefresh } from '../context/RefreshContext'
 
 interface UseErpDataResult<T> {
   data: T | null
@@ -15,6 +19,7 @@ export function useErpData<T>(fetcher: () => Promise<T>, deps: unknown[] = []): 
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [tick, setTick] = useState(0)
+  const { lastRefresh } = useRefresh()
 
   useEffect(() => {
     let cancelled = false
@@ -36,7 +41,7 @@ export function useErpData<T>(fetcher: () => Promise<T>, deps: unknown[] = []): 
       })
 
     return () => { cancelled = true }
-  }, [tick, ...deps]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [tick, lastRefresh, ...deps]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return {
     data,

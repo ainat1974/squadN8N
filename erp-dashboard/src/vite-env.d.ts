@@ -1,8 +1,8 @@
 /// <reference types="vite/client" />
 
 interface ImportMetaEnv {
-  readonly VITE_GOOGLE_CLIENT_ID: string
-  readonly VITE_ALLOWED_EMAILS: string
+  readonly VITE_SUPABASE_URL: string
+  readonly VITE_SUPABASE_ANON_KEY: string
   readonly VITE_API_URL: string
   readonly VITE_N8N_WEBHOOK_URL: string
 }

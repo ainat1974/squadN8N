@@ -8,9 +8,11 @@ import InsightsPage from './pages/InsightsPage'
 import PrivateRoute from './components/PrivateRoute'
 import Layout from './components/Layout'
 import { PeriodProvider } from './context/PeriodContext'
+import { RefreshProvider } from './context/RefreshContext'
 
 export default function App() {
   return (
+    <RefreshProvider>
     <PeriodProvider>
       <BrowserRouter>
         <Routes>
@@ -29,5 +31,6 @@ export default function App() {
         </Routes>
       </BrowserRouter>
     </PeriodProvider>
+    </RefreshProvider>
   )
 }
