@@ -15,6 +15,12 @@ export default function FinancialPage() {
   const crData = (cr.data as any)?.dados
   const fcData = (fc.data as any)?.dados
   const projecao: any[] = fcData?.projecao_4_semanas || []
+  const fluxoResumo = fcData?.summary || {}
+  const fluxoResumoValores = [
+    Number(fluxoResumo.pagamentos_realizados || 0),
+    Number(fluxoResumo.aberto_previsto || 0),
+  ]
+  const temFluxoResumo = fluxoResumoValores.some(value => value > 0)
   const errors = [cp.error, cr.error, fc.error].filter(Boolean)
   const loading = cp.loading || cr.loading || fc.loading
 
@@ -48,9 +54,32 @@ export default function FinancialPage() {
       </div>
 
       <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-2">
-        <Panel title="Fluxo projetado" subtitle="Gerado quando existem vencimentos retornados">
+        <Panel title="Fluxo projetado" subtitle={temFluxoResumo ? 'Pagamentos realizados e parcelas abertas' : 'Gerado quando existem vencimentos retornados'}>
           <div className="h-72 p-4">
-            {loading ? <LoadingBlock height="h-full" /> : projecao.length > 0 ? (
+            {loading ? <LoadingBlock height="h-full" /> : temFluxoResumo ? (
+              <Bar
+                data={{
+                  labels: ['Pagamentos D-1', 'Parcelas abertas'],
+                  datasets: [{
+                    label: 'Valor',
+                    data: fluxoResumoValores,
+                    backgroundColor: ['#42d392', '#ff5f57'],
+                    borderColor: ['#42d392', '#ff5f57'],
+                    borderWidth: 1,
+                    borderRadius: 5,
+                  }],
+                }}
+                options={{
+                  responsive: true,
+                  maintainAspectRatio: false,
+                  plugins: { legend: { display: false } },
+                  scales: {
+                    x: { ticks: { color: '#747474' }, grid: { color: 'rgba(255,255,255,.06)' } },
+                    y: { ticks: { color: '#747474' }, grid: { color: 'rgba(255,255,255,.06)' } },
+                  },
+                }}
+              />
+            ) : projecao.length > 0 ? (
               <Bar
                 data={{
                   labels: projecao.map(item => item.semana),
@@ -74,7 +103,7 @@ export default function FinancialPage() {
         </Panel>
 
         <Panel title="Resumo por semana" subtitle="Entradas, saidas e saldo">
-          <div className="p-4">
+          <div className="overflow-x-auto p-4">
             {loading ? <LoadingBlock /> : projecao.length > 0 ? (
               <table className="data-table">
                 <thead><tr><th>Semana</th><th className="text-right">Entradas</th><th className="text-right">Saidas</th><th className="text-right">Saldo</th></tr></thead>
@@ -133,7 +162,7 @@ function FinancialList({
   getDetail: (item: any) => string
 }) {
   return (
-    <div className="p-4">
+    <div className="overflow-x-auto p-4">
       {loading ? <LoadingBlock /> : items.length > 0 ? (
         <table className="data-table">
           <thead><tr><th>Registro</th><th>Detalhe</th><th className="text-right">Valor</th></tr></thead>
@@ -151,4 +180,3 @@ function FinancialList({
     </div>
   )
 }
-
