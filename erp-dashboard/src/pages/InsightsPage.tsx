@@ -12,8 +12,10 @@ type Recomendacao = {
   produto?: string
   cliente?: string
   motivo?: string
+  fundamentacao?: string
   impacto_esperado?: string
 }
+type GlossarioItem = { termo?: string; definicao?: string }
 type Reposicao = {
   produto?: string
   codigo?: string
@@ -29,12 +31,15 @@ type Analise = {
   modelo?: string
   agente?: string
   resumo_executivo?: string
+  diagnostico?: string
+  metodologia?: string
   saude_financeira?: string
   saude_estoque?: string
   indicadores?: Indicador[]
   alertas?: Alerta[]
   recomendacoes?: Recomendacao[]
   reposicao_urgente?: Reposicao[]
+  glossario?: GlossarioItem[]
   erro?: string
 }
 
@@ -138,6 +143,28 @@ export default function InsightsPage() {
               <p className="m-0 text-sm leading-relaxed text-[var(--text-primary)]">
                 {ativa.resumo_executivo || ativa.erro || 'Sem resumo disponivel.'}
               </p>
+
+              {ativa.diagnostico && (
+                <div className="mt-4 rounded-xl border border-[var(--border)] bg-white/[0.03] p-4">
+                  <div className="text-[11px] font-extrabold uppercase tracking-tight text-[var(--accent)]">
+                    Diagnóstico
+                  </div>
+                  <p className="m-0 mt-1.5 text-sm leading-relaxed text-[var(--text-secondary)]">
+                    {ativa.diagnostico}
+                  </p>
+                </div>
+              )}
+
+              {ativa.metodologia && (
+                <div className="mt-3 rounded-xl border border-dashed border-[var(--border)] p-4">
+                  <div className="text-[11px] font-extrabold uppercase tracking-tight text-[var(--text-muted)]">
+                    Como li os números (metodologia)
+                  </div>
+                  <p className="m-0 mt-1.5 text-sm leading-relaxed text-[var(--text-secondary)]">
+                    {ativa.metodologia}
+                  </p>
+                </div>
+              )}
             </div>
           </Panel>
 
@@ -240,6 +267,11 @@ export default function InsightsPage() {
                         {r.produto || r.cliente || 'Acao geral'}
                       </div>
                       {r.motivo && <p className="m-0 mt-2 text-sm text-[var(--text-secondary)]">{r.motivo}</p>}
+                      {r.fundamentacao && (
+                        <p className="m-0 mt-1.5 border-l-2 border-[var(--accent)]/40 pl-2 text-xs italic text-[var(--text-muted)]">
+                          Por quê: {r.fundamentacao}
+                        </p>
+                      )}
                       {r.impacto_esperado && (
                         <p className="m-0 mt-1 text-xs text-[var(--text-muted)]">Impacto: {r.impacto_esperado}</p>
                       )}
@@ -249,6 +281,22 @@ export default function InsightsPage() {
               </div>
             </Panel>
           </div>
+
+          {/* Glossario didatico */}
+          {(ativa.glossario || []).length > 0 && (
+            <div className="mt-4">
+              <Panel title="Glossário" subtitle="Termos usados na análise, explicados pelo agente">
+                <div className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-2">
+                  {(ativa.glossario || []).map((g, idx) => (
+                    <div key={`${g.termo}-${idx}`} className="rounded-xl border border-[var(--border)] bg-white/[0.02] p-3">
+                      <div className="text-sm font-extrabold text-[var(--text-primary)]">{g.termo}</div>
+                      <p className="m-0 mt-1 text-sm leading-relaxed text-[var(--text-secondary)]">{g.definicao}</p>
+                    </div>
+                  ))}
+                </div>
+              </Panel>
+            </div>
+          )}
 
           {/* Navegacao rapida */}
           <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
