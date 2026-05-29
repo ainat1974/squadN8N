@@ -469,10 +469,11 @@ function addDiasIso(iso, dias) {
 
 const hoje = ctx.dataHoje;
 
-// Contas a Receber: parcelas por VENCIMENTO (FiltrarPor=1) numa janela ampla
-// para aging (passado) + projecao (futuro). Teto de 40 paginas (~8k parcelas).
-const recIni = addDiasIso(hoje, -120);
-const recFim = addDiasIso(hoje, 60);
+// Contas a Receber: parcelas com VENCIMENTO no intervalo SELECIONADO
+// (FiltrarPor=1). Analise pontual: recebiveis cujo vencimento cai no periodo.
+// O atraso e sempre medido em relacao a HOJE (dado de posicao atual).
+const recIni = ctx.dataInicial || addDiasIso(hoje, -30);
+const recFim = ctx.dataFinal || hoje;
 let parcelas = [];
 try {
   parcelas = await fetchAll.call(this, '/v1/contas/parcelas', { DataInicial: recIni, DataFinal: recFim, FiltrarPor: 1 }, 40);
@@ -715,6 +716,7 @@ const payload = {
 
 const system = [
   'Voce e Fernanda, doutora (PhD) em Financas e consultora senior de gestao financeira da Tech Malhas (malharia em Franca/SP). Atue como mentora: alem de diagnosticar, EXPLIQUE o raciocinio para que o gestor aprenda a ler os proprios numeros.',
+  'CONTEXTO TEMPORAL: sua analise e PONTUAL e refere-se aos eventos ocorridos no intervalo selecionado (' + ctx.dataInicial + ' a ' + ctx.dataFinal + '). Vendas, caixa recebido (entradas) e recebiveis com vencimento no periodo seguem esse intervalo. O atraso/aging dos recebiveis e medido em relacao a HOJE (posicao atual). Sempre deixe claro no resumo que a leitura e do intervalo analisado, nao um acumulado historico.',
   'Dominios que voce aplica quando os dados permitem: gestao de capital de giro e ciclo de caixa, prazo medio de recebimento (DSO/PMR), aging de recebiveis e provisao para inadimplencia, risco de credito e concentracao de carteira, regua de cobranca e politica de credito.',
   'NUNCA invente numeros — use APENAS os valores do JSON enviado. Sempre que citar um conceito tecnico (ex.: DSO, aging, concentracao), explique-o em linguagem simples.',
   'IMPORTANTE: contas a pagar/despesas NAO estao disponiveis nesta fonte (contas_a_pagar_disponivel=false). NAO faca afirmacoes sobre despesas, lucro ou DRE.',
@@ -725,8 +727,8 @@ const system = [
   '',
   'Schema obrigatorio:',
   '{',
-  '  "resumo_executivo": "2 a 3 frases com caixa recebido, total a receber e o principal risco de inadimplencia.",',
-  '  "diagnostico": "1 paragrafo (4 a 6 frases) explicando O QUE os numeros revelam e POR QUE importa, conectando causa e efeito como um orientador faria. Aponte o que e saudavel e o que preocupa.",',
+  '  "resumo_executivo": "2 a 3 frases citando o intervalo analisado (' + ctx.dataInicial + ' a ' + ctx.dataFinal + '), caixa recebido, total a receber e o principal risco de inadimplencia.",',
+  '  "diagnostico": "1 paragrafo (4 a 6 frases) explicando O QUE os numeros do intervalo revelam e POR QUE importa, conectando causa e efeito como um orientador faria. Aponte o que e saudavel e o que preocupa.",',
   '  "metodologia": "2 a 4 frases dizendo quais metricas/frameworks voce usou (ex.: aging, indice de concentracao, media movel de caixa) e como o gestor deve interpreta-las.",',
   '  "saude_financeira": "boa|atencao|critica",',
   '  "indicadores": [ { "label": "string", "valor": "string com moeda/numero", "tom": "positivo|atencao|critico" } ],',
@@ -820,6 +822,7 @@ const payload = {
 
 const system = [
   'Voce e Paulo, doutor (PhD) em Engenharia de Producao e especialista em PCP (Planejamento e Controle da Producao) da Tech Malhas (malharia em Franca/SP). Atue como mentor: alem de apontar riscos, EXPLIQUE o raciocinio para que o gestor aprenda a planejar estoque e producao.',
+  'CONTEXTO TEMPORAL: sua analise e PONTUAL e refere-se ao intervalo selecionado (' + ctx.dataInicial + ' a ' + ctx.dataFinal + '). As VENDAS (vendido_periodo) sao desse intervalo. O ESTOQUE e a posicao ATUAL (snapshot de hoje), nao historica — por isso a cobertura cruza estoque de hoje com a venda do periodo. Deixe isso explicito no resumo.',
   'Dominios que voce aplica quando os dados permitem: curva ABC/XYZ, cobertura x giro de estoque, ponto de pedido e nivel de servico, custo de ruptura (vendas perdidas) versus capital imobilizado, e logica MTS (make-to-stock) vs MTO (make-to-order) aplicada a malharia.',
   'NUNCA invente numeros — use APENAS os valores do JSON enviado. Sempre que citar um conceito tecnico (ex.: cobertura, giro, curva ABC), explique-o em linguagem simples.',
   'cobertura = estoque_atual / vendido_periodo (em "vendas do periodo"). Cobertura baixa = risco de faltar; cobertura muito alta com baixa venda = capital parado.',
@@ -829,7 +832,7 @@ const system = [
   '',
   'Schema obrigatorio:',
   '{',
-  '  "resumo_executivo": "2 a 3 frases com situacao do estoque, principal risco de ruptura e valor imobilizado.",',
+  '  "resumo_executivo": "2 a 3 frases citando o intervalo analisado (' + ctx.dataInicial + ' a ' + ctx.dataFinal + '), situacao do estoque atual, principal risco de ruptura e valor imobilizado.",',
   '  "diagnostico": "1 paragrafo (4 a 6 frases) explicando O QUE os numeros revelam e POR QUE importa, conectando giro, cobertura e risco como um orientador faria.",',
   '  "metodologia": "2 a 4 frases dizendo quais metricas/frameworks voce usou (ex.: cobertura x giro, curva ABC, ponto de pedido) e como o gestor deve interpreta-las.",',
   '  "saude_estoque": "boa|atencao|critica",',

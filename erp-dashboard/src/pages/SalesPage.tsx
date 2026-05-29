@@ -94,11 +94,12 @@ export default function SalesPage() {
       <PageHeader
         eyebrow="Relatorio de vendas"
         title="Vendas coletadas"
-        description="Cron 06h consolida ontem (D-1). O botao Atualizar incrementa com as vendas de hoje em tempo real. Os totais somam ontem + hoje ate a meia-noite."
+        description="Vendas do intervalo selecionado, coletadas sob demanda no ERP Dapic. Ao trocar o intervalo, os dados sao recoletados automaticamente."
         meta={
           <>
-            <StatusPill tone="orange">{labelPeriodo}</StatusPill>
-            {periodo?.inicio && <StatusPill tone="muted">{formatDate(periodo.inicio)} a {formatDate(periodo.fim)}</StatusPill>}
+            <StatusPill tone="orange">
+              {periodo?.inicio ? `${formatDate(periodo.inicio)} a ${formatDate(periodo.fim)}` : labelPeriodo}
+            </StatusPill>
           </>
         }
       />

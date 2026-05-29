@@ -75,6 +75,10 @@ export default function InsightsPage() {
   const geradoEm = (financeiro?.gerado_em || pcp?.gerado_em)
     ? new Date((financeiro?.gerado_em || pcp?.gerado_em) as string).toLocaleString('pt-BR')
     : null
+  const fmtDia = (iso?: string) => (iso ? iso.split('-').reverse().join('/') : '')
+  const periodoLabel = response?.dataInicial && response?.dataFinal
+    ? `${fmtDia(response.dataInicial)} a ${fmtDia(response.dataFinal)}`
+    : null
 
   if (error) {
     return (
@@ -95,10 +99,11 @@ export default function InsightsPage() {
       <PageHeader
         eyebrow="Analise inteligente"
         title="Insights dos agentes"
-        description="Fernanda (Financeiro) e Paulo (PCP) leem os dados coletados e geram leitura executiva. Os numeros sao deterministicos (workflow); a interpretacao e dos agentes (gpt-4o)."
+        description="Fernanda (Financeiro) e Paulo (PCP) fazem uma analise PONTUAL dos eventos do intervalo selecionado. Os numeros sao deterministicos (workflow); a interpretacao e dos agentes (gpt-4o)."
         meta={
           <>
-            <StatusPill tone="orange">gpt-4o</StatusPill>
+            {periodoLabel && <StatusPill tone="orange">{periodoLabel}</StatusPill>}
+            <StatusPill tone="muted">gpt-4o</StatusPill>
             {geradoEm && <StatusPill tone="muted">Gerado {geradoEm}</StatusPill>}
           </>
         }

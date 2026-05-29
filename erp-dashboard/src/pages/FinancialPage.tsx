@@ -14,6 +14,10 @@ export default function FinancialPage() {
   const cpData = (cp.data as any)?.dados
   const crData = (cr.data as any)?.dados
   const fcData = (fc.data as any)?.dados
+  const periodoMeta = (fc.data as any) || (cr.data as any) || (cp.data as any)
+  const periodoLabel = periodoMeta?.dataInicial && periodoMeta?.dataFinal
+    ? `${formatDate(periodoMeta.dataInicial)} a ${formatDate(periodoMeta.dataFinal)}`
+    : null
   const projecao: any[] = fcData?.projecao_4_semanas || []
   const fluxoResumo = fcData?.summary || {}
   const mediaSemanal = Number(fluxoResumo.media_semanal_entradas || 0)
@@ -34,10 +38,10 @@ export default function FinancialPage() {
       <PageHeader
         eyebrow="Financeiro"
         title="Contas e fluxo"
-        description="Este modulo apresenta os registros financeiros retornados na coleta D-1. Listas vazias significam ausencia de parcelas retornadas para a data, nao problema visual."
+        description="Caixa recebido e recebiveis com vencimento no intervalo selecionado. O atraso/inadimplencia e medido em relacao a hoje. Listas vazias indicam ausencia de parcelas no periodo, nao erro visual."
         meta={
           <>
-            <StatusPill tone="muted">Snapshot D-1</StatusPill>
+            {periodoLabel && <StatusPill tone="orange">{periodoLabel}</StatusPill>}
             {errors.length > 0 && <StatusPill tone="red">{errors.length} erro(s)</StatusPill>}
           </>
         }

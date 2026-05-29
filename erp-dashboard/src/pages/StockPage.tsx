@@ -62,8 +62,8 @@ export default function StockPage() {
       <PageHeader
         eyebrow="Snapshot de estoque"
         title="Estoque dos grupos do Top 10"
-        description="Atualizado no cron (ontem) e reforcado a cada clique em Atualizar com estoque ao vivo dos produtos vendidos hoje nos grupos do Top 10."
-        meta={<StatusPill tone="muted">Ultima coleta</StatusPill>}
+        description="Posicao ATUAL do estoque (snapshot de hoje) — o Dapic nao fornece estoque historico. A coluna 'Vendido' refere-se ao intervalo selecionado."
+        meta={<StatusPill tone="muted">Posicao atual</StatusPill>}
       />
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-4">

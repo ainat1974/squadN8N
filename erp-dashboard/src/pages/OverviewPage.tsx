@@ -110,7 +110,7 @@ export default function OverviewPage() {
       <PageHeader
         eyebrow="ERP Dapic / Command Center"
         title="Visao Geral Executiva"
-        description="Defina o intervalo, clique em Atualizar para coletar no Dapic e visualizar. Estoque permanece snapshot da ultima coleta."
+        description="Defina o intervalo: ao alterar, os dados sao recoletados automaticamente no Dapic. Vendas, caixa e recebiveis seguem o intervalo; estoque e a posicao atual (snapshot)."
         meta={
           <>
             <StatusPill tone="orange">{labelConsulta}</StatusPill>
