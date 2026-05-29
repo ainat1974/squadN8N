@@ -16,6 +16,11 @@ export default function FinancialPage() {
   const fcData = (fc.data as any)?.dados
   const projecao: any[] = fcData?.projecao_4_semanas || []
   const fluxoResumo = fcData?.summary || {}
+  const mediaSemanal = Number(fluxoResumo.media_semanal_entradas || 0)
+  const usaMediaMovel = (fcData?.metodo_projecao || '') === 'media_movel_entradas_realizadas'
+  const projecaoSubtitle = usaMediaMovel
+    ? `Estimativa por media movel das entradas realizadas${mediaSemanal > 0 ? ` (~${formatBRL(mediaSemanal)}/semana)` : ''}`
+    : 'Entradas, saidas e saldo'
   const fluxoResumoValores = [
     Number(fluxoResumo.pagamentos_realizados || 0),
     Number(fluxoResumo.aberto_previsto || 0),
@@ -102,7 +107,7 @@ export default function FinancialPage() {
           </div>
         </Panel>
 
-        <Panel title="Resumo por semana" subtitle="Entradas, saidas e saldo">
+        <Panel title="Resumo por semana" subtitle={projecaoSubtitle}>
           <div className="overflow-x-auto p-4">
             {loading ? <LoadingBlock /> : projecao.length > 0 ? (
               <table className="data-table">

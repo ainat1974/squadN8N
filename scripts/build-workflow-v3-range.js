@@ -586,13 +586,28 @@ const serie_entradas = Array.from(serieDia.entries())
   .sort((a, b) => a[0].localeCompare(b[0]))
   .map(([data, valor]) => ({ data, valor: round(valor) }));
 
-const projecao_4_semanas = projWeeks.map((v, i) => ({
-  semana: 'Sem ' + (i + 1),
-  periodo: addDiasIso(hoje, i * 7) + '..' + addDiasIso(hoje, i * 7 + 6),
-  entradas_previstas: round(v),
-  saidas_previstas: 0,
-  saldo_semana: round(v)
-}));
+// Projecao por MEDIA MOVEL das entradas realizadas.
+// A loja recebe majoritariamente a vista (cartao/pix), entao nao ha recebiveis
+// futuros em aberto. A projecao usa o ritmo medio diario de caixa que de fato
+// entrou na janela, somando eventuais parcelas a prazo com vencimento futuro.
+const diasJanela = Math.max(1, Math.round((new Date(fin.pagFim + 'T00:00:00') - new Date(fin.pagIni + 'T00:00:00')) / 86400000) + 1);
+const media_diaria_entradas = round(pagamentos_realizados / diasJanela);
+const media_semanal_entradas = round(media_diaria_entradas * 7);
+
+const projecao_4_semanas = [0, 1, 2, 3].map((i) => {
+  const recebiveis_a_vencer = round(projWeeks[i]);
+  const base_media = media_semanal_entradas;
+  const entradas_previstas = round(base_media + recebiveis_a_vencer);
+  return {
+    semana: 'Sem ' + (i + 1),
+    periodo: addDiasIso(hoje, i * 7) + '..' + addDiasIso(hoje, i * 7 + 6),
+    entradas_previstas,
+    base_media,
+    recebiveis_a_vencer,
+    saidas_previstas: 0,
+    saldo_semana: entradas_previstas
+  };
+});
 
 const gerado_em = new Date().toISOString();
 
@@ -636,10 +651,15 @@ const contasPagar = {
 
 const fluxoCaixa = {
   gerado_em,
+  metodo_projecao: 'media_movel_entradas_realizadas',
   summary: {
     pagamentos_realizados: round(pagamentos_realizados),
     aberto_previsto: round(total_aberto),
-    saldo: round(pagamentos_realizados - total_aberto)
+    saldo: round(pagamentos_realizados - total_aberto),
+    media_diaria_entradas,
+    media_semanal_entradas,
+    dias_janela: diasJanela,
+    projecao_4_semanas_total: round(projecao_4_semanas.reduce((s, w) => s + w.entradas_previstas, 0))
   },
   projecao_4_semanas,
   serie_entradas,
@@ -682,7 +702,14 @@ const payload = {
     concentracao_top1_pct: concentracaoTop1,
     top_devedores: topDev
   },
-  projecao_4_semanas: fc.projecao_4_semanas || [],
+  projecao_caixa: {
+    metodo: fc.metodo_projecao || 'media_movel_entradas_realizadas',
+    media_diaria_entradas: num(fc.summary.media_diaria_entradas),
+    media_semanal_entradas: num(fc.summary.media_semanal_entradas),
+    dias_base: num(fc.summary.dias_janela),
+    proximas_4_semanas: fc.projecao_4_semanas || [],
+    total_4_semanas: num(fc.summary.projecao_4_semanas_total)
+  },
   contas_a_pagar_disponivel: false
 };
 
@@ -690,7 +717,8 @@ const system = [
   'Voce e Fernanda, CFO/analista financeira senior da Tech Malhas (malharia em Franca/SP).',
   'NUNCA invente numeros — use APENAS os valores do JSON enviado.',
   'IMPORTANTE: contas a pagar/despesas NAO estao disponiveis nesta fonte (contas_a_pagar_disponivel=false). NAO faca afirmacoes sobre despesas, lucro ou DRE.',
-  'Foque em: caixa recebido, recebiveis em aberto, inadimplencia/aging, concentracao de devedores e acoes de cobranca.',
+  'PROJECAO DE CAIXA: a loja recebe majoritariamente a vista (cartao/pix), entao quase nao ha recebiveis a prazo em aberto. A projecao_caixa.proximas_4_semanas e uma ESTIMATIVA baseada na media movel das entradas realizadas (media_semanal_entradas) somada a eventuais parcelas a prazo a vencer. Trate-a como estimativa de ritmo de recebimento, NAO como nula. Comente o caixa medio semanal esperado.',
+  'Foque em: caixa recebido, ritmo/projecao de entradas, recebiveis em aberto, inadimplencia/aging, concentracao de devedores e acoes de cobranca.',
   'Responda APENAS com um objeto JSON valido (sem markdown, sem code fences, sem texto fora do JSON).',
   'Tom: direto, objetivo, portugues BR, foco em decisao.',
   '',
@@ -1024,11 +1052,22 @@ if (modulo === 'contas-receber') {
 
 if (modulo === 'fluxo-caixa') {
   const dados = fluxoCaixa || financeiro;
-  const pago = dados?.summary?.pagamentos_realizados || dados?.summary?.total_pagamentos_d1 || 0;
-  const aberto = dados?.summary?.aberto_previsto || dados?.summary?.total_aberto || 0;
+  const s = dados?.summary || {};
+  const pago = s.pagamentos_realizados || s.total_pagamentos_d1 || 0;
+  const aberto = s.aberto_previsto || s.total_aberto || 0;
   return [{ json: wrap({
-    summary: { pagamentos_realizados: pago, aberto_previsto: aberto, saldo: round(pago - aberto) },
-    projecao_4_semanas: dados?.projecao_4_semanas || dados?.fluxo_diario || []
+    metodo_projecao: dados?.metodo_projecao || 'media_movel_entradas_realizadas',
+    summary: {
+      pagamentos_realizados: pago,
+      aberto_previsto: aberto,
+      saldo: round(pago - aberto),
+      media_diaria_entradas: s.media_diaria_entradas || 0,
+      media_semanal_entradas: s.media_semanal_entradas || 0,
+      dias_janela: s.dias_janela || 0,
+      projecao_4_semanas_total: s.projecao_4_semanas_total || 0
+    },
+    projecao_4_semanas: dados?.projecao_4_semanas || dados?.fluxo_diario || [],
+    serie_entradas: dados?.serie_entradas || []
   }) }];
 }
 
