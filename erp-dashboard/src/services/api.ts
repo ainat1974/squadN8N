@@ -28,13 +28,15 @@ async function fetchModulo(modulo: string, options: FetchModuloOptions = {}) {
   return json
 }
 
+/** URL do webhook que dispara a coleta. Usa a env quando definida; senao
+ *  cai no mesmo host das leituras, garantindo que o botao Atualizar funcione
+ *  mesmo sem VITE_N8N_WEBHOOK_URL configurada no build. */
+const TRIGGER_WEBHOOK_URL =
+  (import.meta.env.VITE_N8N_WEBHOOK_URL as string | undefined) || `${N8N_HOST}/webhook/atualizar`
+
 /** Dispara coleta sob demanda no N8N (sem cron). */
 export async function triggerColeta(dataInicial: string, dataFinal: string) {
-  const webhookUrl = import.meta.env.VITE_N8N_WEBHOOK_URL as string | undefined
-  if (!webhookUrl) {
-    throw new Error('VITE_N8N_WEBHOOK_URL nao configurada')
-  }
-  const res = await fetch(webhookUrl, {
+  const res = await fetch(TRIGGER_WEBHOOK_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ dataInicial, dataFinal }),

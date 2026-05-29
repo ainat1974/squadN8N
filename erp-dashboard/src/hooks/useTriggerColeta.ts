@@ -1,18 +1,17 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect } from 'react'
 import { api, triggerColeta } from '../services/api'
 import { usePeriod } from '../context/PeriodContext'
-import { useRefresh } from '../context/RefreshContext'
+import { useRefresh, type ColetaState } from '../context/RefreshContext'
 import { buildApiOptions } from '../utils/period'
 
-export type ColetaState = 'idle' | 'starting' | 'polling' | 'success' | 'timeout' | 'error'
+export type { ColetaState }
 
 const POLL_INTERVAL_MS = 5000
 const POLL_MAX_MS = 240_000
 
 export function useTriggerColeta() {
   const { range } = usePeriod()
-  const { triggerRefresh } = useRefresh()
-  const [state, setState] = useState<ColetaState>('idle')
+  const { triggerRefresh, coletaState: state, setColetaState: setState } = useRefresh()
   const fetchOptions = buildApiOptions(range)
 
   useEffect(() => {
@@ -20,10 +19,12 @@ export function useTriggerColeta() {
       const t = setTimeout(() => setState('idle'), 6000)
       return () => clearTimeout(t)
     }
-  }, [state])
+  }, [state, setState])
 
   const run = useCallback(
     async (baseAtualizadoEm?: string | null) => {
+      // Evita disparo duplo quando os dois botoes Atualizar coexistem.
+      if (state === 'starting' || state === 'polling') return
       setState('starting')
       try {
         await triggerColeta(range.dataInicial, range.dataFinal)
@@ -50,7 +51,7 @@ export function useTriggerColeta() {
       }
       setState('timeout')
     },
-    [range.dataInicial, range.dataFinal, fetchOptions, triggerRefresh],
+    [range.dataInicial, range.dataFinal, fetchOptions, triggerRefresh, state, setState],
   )
 
   const isBusy = state === 'starting' || state === 'polling'

@@ -95,14 +95,16 @@ button, input, select {
 }
 
 .date-input {
-  height: 34px;
-  min-width: 148px;
+  height: 38px;
+  width: 100%;
+  min-width: 0;
   padding: 0 10px;
   border: 1px solid var(--border);
   border-radius: 6px;
   background: rgba(0, 0, 0, 0.45);
   color: var(--text-primary);
   color-scheme: dark;
+  font-size: 13px;
 }
 
 .date-input:focus {
@@ -111,8 +113,46 @@ button, input, select {
   box-shadow: 0 0 0 1px rgba(255, 122, 47, 0.25);
 }
 
+/* Indicador de calendario: com color-scheme dark o icone ja e claro;
+   aqui garantimos contraste, area de toque e destaque no hover. */
+.date-input::-webkit-calendar-picker-indicator {
+  width: 18px;
+  height: 18px;
+  padding: 4px;
+  margin-left: 2px;
+  border-radius: 4px;
+  cursor: pointer;
+  opacity: 0.7;
+  filter: brightness(1.4);
+  transition: opacity 0.15s ease, background 0.15s ease;
+}
+
+.date-input::-webkit-calendar-picker-indicator:hover {
+  opacity: 1;
+  background: rgba(255, 122, 47, 0.18);
+}
+
+/* Firefox/restante: mantem o controle nativo com tema escuro. */
+@supports not selector(::-webkit-calendar-picker-indicator) {
+  .date-input {
+    accent-color: var(--accent);
+  }
+}
+
+/* Em telas pequenas o alvo de toque do icone aumenta. */
+@media (max-width: 640px) {
+  .date-input {
+    height: 42px;
+    font-size: 14px;
+  }
+  .date-input::-webkit-calendar-picker-indicator {
+    width: 22px;
+    height: 22px;
+  }
+}
+
 .action-button {
-  height: 34px;
+  height: 38px;
   border-radius: 6px;
   border: 1px solid var(--border-strong);
   background: linear-gradient(180deg, rgba(255, 122, 47, 0.22), rgba(255, 122, 47, 0.07));

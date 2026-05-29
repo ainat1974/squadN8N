@@ -32,8 +32,8 @@ export default function DateRangePicker({ showAtualizar, onAtualizar, atualizand
           </p>
         </div>
 
-        <div className="flex flex-wrap items-end gap-3">
-          <label htmlFor="data-inicial" className="flex flex-col gap-1 text-xs text-[var(--text-secondary)]">
+        <div className="flex w-full flex-wrap items-end gap-3 lg:w-auto">
+          <label htmlFor="data-inicial" className="flex min-w-[140px] flex-1 flex-col gap-1 text-xs text-[var(--text-secondary)] sm:flex-none">
             De
             <input
               id="data-inicial"
@@ -45,7 +45,7 @@ export default function DateRangePicker({ showAtualizar, onAtualizar, atualizand
               onChange={e => setRange({ ...range, dataInicial: e.target.value })}
             />
           </label>
-          <label htmlFor="data-final" className="flex flex-col gap-1 text-xs text-[var(--text-secondary)]">
+          <label htmlFor="data-final" className="flex min-w-[140px] flex-1 flex-col gap-1 text-xs text-[var(--text-secondary)] sm:flex-none">
             Até
             <input
               id="data-final"
@@ -62,7 +62,7 @@ export default function DateRangePicker({ showAtualizar, onAtualizar, atualizand
               type="button"
               onClick={onAtualizar}
               disabled={atualizando}
-              className="action-button px-4 text-xs font-bold disabled:opacity-60"
+              className="action-button w-full px-4 text-xs font-bold disabled:opacity-60 sm:w-auto"
               title="Coleta o intervalo selecionado no ERP Dapic"
             >
               {atualizando ? 'Coletando…' : 'Atualizar'}
