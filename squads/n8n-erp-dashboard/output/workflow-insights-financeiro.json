@@ -1,0 +1,444 @@
+{
+  "name": "Tech Malhas - Insights IA Financeiro",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "coletar-financeiro-ia",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "trigger-webhook",
+      "name": "Webhook Coletar",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [
+        240,
+        400
+      ],
+      "webhookId": "insights-financeiro-coletar",
+      "notes": "POST /webhook/coletar-financeiro-ia body: { dataInicial, dataFinal } YYYY-MM-DD"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json || {};\nconst body = input.body || input.json || input;\nconst MAX = 90;\nconst hoje = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date());\n\nlet dataInicial = String(body.dataInicial || body.DataInicial || hoje).slice(0, 10);\nlet dataFinal = String(body.dataFinal || body.DataFinal || hoje).slice(0, 10);\n\nif (dataInicial > dataFinal) {\n  const tmp = dataInicial;\n  dataInicial = dataFinal;\n  dataFinal = tmp;\n}\n\nconst start = new Date(dataInicial + 'T12:00:00');\nconst end = new Date(dataFinal + 'T12:00:00');\nlet dias = Math.floor((end - start) / 86400000) + 1;\nlet limiteAplicado = false;\nif (dias > MAX) {\n  const limited = new Date(end);\n  limited.setDate(limited.getDate() - (MAX - 1));\n  dataInicial = limited.toISOString().slice(0, 10);\n  dias = MAX;\n  limiteAplicado = true;\n}\n\nreturn [{ json: {\n  dataInicial,\n  dataFinal,\n  dataHoje: hoje,\n  janelaColeta: dataInicial === dataFinal ? 'dia' : 'intervalo',\n  diasIntervalo: dias,\n  limiteAplicado,\n  maxDias: MAX\n} }];"
+      },
+      "id": "definir-periodo",
+      "name": "Definir Periodo",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.dapic.com.br/autenticacao/v1/login",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "Empresa",
+              "value": "={{ $vars.DAPIC_EMPRESA }}"
+            },
+            {
+              "name": "TokenIntegracao",
+              "value": "={{ $vars.DAPIC_TOKEN_INTEGRACAO }}"
+            }
+          ]
+        },
+        "options": {
+          "retry": {
+            "enabled": true,
+            "maxRetries": 3,
+            "retryInterval": 1000
+          }
+        }
+      },
+      "id": "auth-dapic",
+      "name": "🔐 Autenticar Dapic",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        720,
+        400
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
+    },
+    {
+      "parameters": {
+        "jsCode": "const auth = $('🔐 Autenticar Dapic').first().json;\nconst periodo = $('Definir Periodo').first().json;\n\nconst token = auth.access_token || auth.token || (auth.data && auth.data.access_token) || '';\nif (!token) {\n  throw new Error('Falha na autenticacao Dapic: access_token nao retornado');\n}\n\nreturn [{\n  json: {\n    token,\n    dataHoje: periodo.dataHoje,\n    dataInicial: periodo.dataInicial,\n    dataFinal: periodo.dataFinal,\n    janelaColeta: periodo.janelaColeta || 'intervalo',\n    diasIntervalo: periodo.diasIntervalo || 1,\n    limiteAplicado: periodo.limiteAplicado || false,\n    maxDias: periodo.maxDias || 90,\n    baseUrl: 'https://api.dapic.com.br',\n    iniciadoEm: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "preparar-contexto",
+      "name": "Preparar Contexto",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const ctx = $('Preparar Contexto').first().json;\nconst { baseUrl } = ctx;\nlet currentToken = ctx.token;\n\nconst sleep = (ms) => new Promise(r => setTimeout(r, ms));\n\nasync function refreshToken() {\n  const auth = await this.helpers.httpRequest({\n    method: 'POST',\n    url: baseUrl + '/autenticacao/v1/login',\n    headers: { 'Content-Type': 'application/json' },\n    body: { Empresa: $vars.DAPIC_EMPRESA, TokenIntegracao: $vars.DAPIC_TOKEN_INTEGRACAO },\n    json: true\n  });\n  if (!auth.access_token) throw new Error('Falha ao renovar token (financeiro)');\n  currentToken = auth.access_token;\n}\n\nasync function request(endpoint, params = {}, retry401 = true) {\n  const delays = [1000, 2000, 4000];\n  for (let i = 0; i <= delays.length; i++) {\n    try {\n      return await this.helpers.httpRequest({\n        method: 'GET',\n        url: baseUrl + endpoint,\n        headers: { Authorization: 'Bearer ' + currentToken },\n        qs: params,\n        json: true\n      });\n    } catch (err) {\n      const status = err.httpCode || err.statusCode || err.response?.statusCode;\n      if (status === 401 && retry401) {\n        await refreshToken.call(this);\n        return request.call(this, endpoint, params, false);\n      }\n      if ((status === 429 || status >= 500) && i < delays.length) {\n        await sleep(delays[i]);\n        continue;\n      }\n      throw err;\n    }\n  }\n}\n\nasync function fetchAll(endpoint, params = {}, maxPaginas = Infinity) {\n  const all = [];\n  let pagina = 1;\n  let totalPaginas = 1;\n  do {\n    const resp = await request.call(this, endpoint, { ...params, Pagina: pagina, RegistrosPorPagina: 200 });\n    if (Array.isArray(resp?.Dados)) all.push(...resp.Dados);\n    totalPaginas = Math.min(Number(resp?.TotalPaginas || 1), maxPaginas);\n    if (pagina < totalPaginas) await sleep(250);\n    pagina++;\n  } while (pagina <= totalPaginas);\n  return all;\n}\n\nfunction addDiasIso(iso, dias) {\n  const d = new Date(iso + 'T12:00:00');\n  d.setDate(d.getDate() + dias);\n  return d.toISOString().slice(0, 10);\n}\n\nconst hoje = ctx.dataHoje;\n\n// Contas a Receber: parcelas com VENCIMENTO no intervalo SELECIONADO\n// (FiltrarPor=1). Analise pontual: recebiveis cujo vencimento cai no periodo.\n// O atraso e sempre medido em relacao a HOJE (dado de posicao atual).\nconst recIni = ctx.dataInicial || addDiasIso(hoje, -30);\nconst recFim = ctx.dataFinal || hoje;\nlet parcelas = [];\ntry {\n  parcelas = await fetchAll.call(this, '/v1/contas/parcelas', { DataInicial: recIni, DataFinal: recFim, FiltrarPor: 1 }, 40);\n} catch (e) {\n  console.log('Parcelas (contas a receber) indisponivel: ' + (e.message || e));\n}\n\n// Entradas realizadas de caixa: pagamentos no intervalo escolhido (fallback 30d)\nconst pagIni = ctx.dataInicial || addDiasIso(hoje, -30);\nconst pagFim = ctx.dataFinal || hoje;\nlet pagamentos = [];\ntry {\n  pagamentos = await fetchAll.call(this, '/v1/contas/pagamentos', { DataInicial: pagIni, DataFinal: pagFim }, 40);\n} catch (e) {\n  console.log('Pagamentos (entradas) indisponivel: ' + (e.message || e));\n}\n\nreturn [{ json: { parcelas, pagamentos, hoje, recIni, recFim, pagIni, pagFim, coletadoEm: new Date().toISOString() } }];"
+      },
+      "id": "coletar-financeiro",
+      "name": "Coletar Financeiro",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        400
+      ],
+      "continueOnFail": true,
+      "notes": "Contas a Receber (parcelas) + entradas (pagamentos) do intervalo"
+    },
+    {
+      "parameters": {
+        "jsCode": "const fin = $('Coletar Financeiro').first().json;\nconst parcelas = fin.parcelas || [];\nconst pagamentos = fin.pagamentos || [];\nconst hoje = fin.hoje;\n\nconst toNum = (v) => Number(v || 0) || 0;\nconst round = (v) => Math.round((Number(v) || 0) * 100) / 100;\nconst diaDe = (s) => String(s || '').slice(0, 10);\nconst addDiasIso = (iso, dias) => { const d = new Date(iso + 'T12:00:00'); d.setDate(d.getDate() + dias); return d.toISOString().slice(0, 10); };\n// dias de atraso: >0 vencido, <0 ainda vai vencer\nconst atrasoDe = (venc) => {\n  const a = new Date(hoje + 'T00:00:00');\n  const b = new Date(diaDe(venc) + 'T00:00:00');\n  return Math.round((a - b) / 86400000);\n};\n\n// Parcelas em aberto (ignora canceladas; considera Aberta ou com ValorAberto > 0)\nconst abertas = parcelas.filter(p => {\n  const s = String(p.Status || '').toLowerCase();\n  if (s === 'cancelada' || s === 'perdida') return false;\n  return s === 'aberta' || toNum(p.ValorAberto) > 0;\n});\n\nlet total_aberto = 0, total_vencido = 0, total_a_vencer = 0;\nconst aging = { a_vencer: 0, d1_30: 0, d31_60: 0, d61_90: 0, d90_plus: 0 };\nconst porPessoa = new Map();\nconst vencidasArr = [];\nconst vencendo7dArr = [];\nconst projWeeks = [0, 0, 0, 0];\n\nfor (const p of abertas) {\n  const valor = toNum(p.ValorAberto || p.ValorFinal || p.Valor);\n  if (valor <= 0) continue;\n  const venc = diaDe(p.DataVencimento);\n  const atraso = atrasoDe(venc);\n  const pessoa = String(p.Pessoa || '').trim() || 'Cliente nao informado';\n  const reg = {\n    id: p.IdParcela,\n    cliente: pessoa,\n    pessoa,\n    valor: round(valor),\n    valor_aberto: round(valor),\n    data_vencimento: venc,\n    dias_atraso: atraso > 0 ? atraso : 0,\n    conta: p.Conta || null,\n    forma_pagamento: p.FormaPagamento || null\n  };\n  total_aberto += valor;\n\n  if (atraso > 0) {\n    total_vencido += valor;\n    vencidasArr.push(reg);\n    if (atraso <= 30) aging.d1_30 += valor;\n    else if (atraso <= 60) aging.d31_60 += valor;\n    else if (atraso <= 90) aging.d61_90 += valor;\n    else aging.d90_plus += valor;\n  } else {\n    total_a_vencer += valor;\n    aging.a_vencer += valor;\n    if (atraso >= -7) vencendo7dArr.push(reg);\n    const diasAteVencer = -atraso;\n    const wi = Math.floor(diasAteVencer / 7);\n    if (wi >= 0 && wi < 4) projWeeks[wi] += valor;\n  }\n\n  const acc = porPessoa.get(pessoa) || { cliente: pessoa, pessoa, valor: 0, vencido: 0 };\n  acc.valor += valor;\n  if (atraso > 0) acc.vencido += valor;\n  porPessoa.set(pessoa, acc);\n}\n\nvencidasArr.sort((a, b) => b.valor - a.valor);\nvencendo7dArr.sort((a, b) => a.data_vencimento.localeCompare(b.data_vencimento));\nconst top_devedores = Array.from(porPessoa.values())\n  .map(x => ({ ...x, valor: round(x.valor), vencido: round(x.vencido) }))\n  .sort((a, b) => b.vencido - a.vencido || b.valor - a.valor)\n  .slice(0, 10);\nconst total_vencendo_7d = vencendo7dArr.reduce((s, r) => s + r.valor, 0);\n\n// Entradas realizadas (pagamentos = recebimentos efetivados)\nlet pagamentos_realizados = 0;\nconst serieDia = new Map();\nfor (const pg of pagamentos) {\n  if (pg.Cancelado) continue;\n  const v = toNum(pg.ValorPago || pg.Valor);\n  if (v <= 0) continue;\n  pagamentos_realizados += v;\n  const d = diaDe(pg.DataPagamento);\n  serieDia.set(d, (serieDia.get(d) || 0) + v);\n}\nconst serie_entradas = Array.from(serieDia.entries())\n  .sort((a, b) => a[0].localeCompare(b[0]))\n  .map(([data, valor]) => ({ data, valor: round(valor) }));\n\n// Projecao por MEDIA MOVEL das entradas realizadas.\nconst diasJanela = Math.max(1, Math.round((new Date(fin.pagFim + 'T00:00:00') - new Date(fin.pagIni + 'T00:00:00')) / 86400000) + 1);\nconst media_diaria_entradas = round(pagamentos_realizados / diasJanela);\nconst media_semanal_entradas = round(media_diaria_entradas * 7);\n\nconst projecao_4_semanas = [0, 1, 2, 3].map((i) => {\n  const recebiveis_a_vencer = round(projWeeks[i]);\n  const base_media = media_semanal_entradas;\n  const entradas_previstas = round(base_media + recebiveis_a_vencer);\n  return {\n    semana: 'Sem ' + (i + 1),\n    periodo: addDiasIso(hoje, i * 7) + '..' + addDiasIso(hoje, i * 7 + 6),\n    entradas_previstas,\n    base_media,\n    recebiveis_a_vencer,\n    saidas_previstas: 0,\n    saldo_semana: entradas_previstas\n  };\n});\n\nconst gerado_em = new Date().toISOString();\n\nconst contasReceber = {\n  gerado_em,\n  summary: {\n    total_aberto: round(total_aberto),\n    total_pendente: round(total_aberto),\n    total_vencido: round(total_vencido),\n    total_inadimplente: round(total_vencido),\n    total_a_vencer: round(total_a_vencer),\n    total_vencendo_7d: round(total_vencendo_7d),\n    saldo_liquido: round(pagamentos_realizados),\n    qt_aberto: abertas.length,\n    qt_vencido: vencidasArr.length\n  },\n  aging: {\n    a_vencer: round(aging.a_vencer),\n    d1_30: round(aging.d1_30),\n    d31_60: round(aging.d31_60),\n    d61_90: round(aging.d61_90),\n    d90_plus: round(aging.d90_plus)\n  },\n  vencidas: vencidasArr.slice(0, 50),\n  inadimplentes: vencidasArr.slice(0, 50),\n  vencendo_7d: vencendo7dArr.slice(0, 50),\n  recebendo_7d: vencendo7dArr.slice(0, 50),\n  top_devedores\n};\n\nconst fluxoCaixa = {\n  gerado_em,\n  metodo_projecao: 'media_movel_entradas_realizadas',\n  summary: {\n    pagamentos_realizados: round(pagamentos_realizados),\n    aberto_previsto: round(total_aberto),\n    saldo: round(pagamentos_realizados - total_aberto),\n    media_diaria_entradas,\n    media_semanal_entradas,\n    dias_janela: diasJanela,\n    projecao_4_semanas_total: round(projecao_4_semanas.reduce((s, w) => s + w.entradas_previstas, 0))\n  },\n  projecao_4_semanas,\n  serie_entradas,\n  periodo_entradas: { inicio: fin.pagIni, fim: fin.pagFim }\n};\n\nreturn [{ json: { contasReceber, fluxoCaixa } }];"
+      },
+      "id": "transformar-financeiro",
+      "name": "Transformar Financeiro",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1440,
+        400
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const ctx = $('Preparar Contexto').first().json;\nconst fin = $('Transformar Financeiro').first().json || {};\nconst cr = fin.contasReceber || { summary: {}, aging: {}, top_devedores: [] };\nconst fc = fin.fluxoCaixa || { summary: {}, projecao_4_semanas: [] };\n\nconst num = (v) => Number(v || 0) || 0;\nconst totalReceber = num(cr.summary.total_aberto);\nconst totalVencido = num(cr.summary.total_vencido);\nconst topDev = (cr.top_devedores || []).slice(0, 8);\nconst concentracaoTop1 = totalReceber > 0 && topDev[0] ? Math.round((num(topDev[0].valor) / totalReceber) * 1000) / 10 : 0;\n\nconst payload = {\n  periodo: { inicio: ctx.dataInicial, fim: ctx.dataFinal },\n  caixa: {\n    entradas_realizadas: num(fc.summary.pagamentos_realizados),\n    a_receber_aberto: totalReceber,\n    a_receber_vencido: totalVencido\n  },\n  inadimplencia: {\n    total_vencido: totalVencido,\n    pct_sobre_aberto: totalReceber > 0 ? Math.round((totalVencido / totalReceber) * 1000) / 10 : 0,\n    aging: cr.aging || {},\n    qt_titulos_vencidos: num(cr.summary.qt_vencido),\n    concentracao_top1_pct: concentracaoTop1,\n    top_devedores: topDev\n  },\n  projecao_caixa: {\n    metodo: fc.metodo_projecao || 'media_movel_entradas_realizadas',\n    media_diaria_entradas: num(fc.summary.media_diaria_entradas),\n    media_semanal_entradas: num(fc.summary.media_semanal_entradas),\n    dias_base: num(fc.summary.dias_janela),\n    proximas_4_semanas: fc.projecao_4_semanas || [],\n    total_4_semanas: num(fc.summary.projecao_4_semanas_total)\n  },\n  contas_a_pagar_disponivel: false\n};\n\nconst system = [\n  'Voce e Fernanda, doutora (PhD) em Financas e consultora senior de gestao financeira da Tech Malhas (malharia em Franca/SP). Atue como mentora: alem de diagnosticar, EXPLIQUE o raciocinio para que o gestor aprenda a ler os proprios numeros.',\n  'CONTEXTO TEMPORAL: sua analise e PONTUAL e refere-se aos eventos ocorridos no intervalo selecionado (' + ctx.dataInicial + ' a ' + ctx.dataFinal + '). Caixa recebido (entradas) e recebiveis com vencimento no periodo seguem esse intervalo. O atraso/aging dos recebiveis e medido em relacao a HOJE (posicao atual). Sempre deixe claro no resumo que a leitura e do intervalo analisado, nao um acumulado historico.',\n  'Dominios que voce aplica quando os dados permitem: gestao de capital de giro e ciclo de caixa, prazo medio de recebimento (DSO/PMR), aging de recebiveis e provisao para inadimplencia, risco de credito e concentracao de carteira, regua de cobranca e politica de credito.',\n  'NUNCA invente numeros — use APENAS os valores do JSON enviado. Sempre que citar um conceito tecnico (ex.: DSO, aging, concentracao), explique-o em linguagem simples.',\n  'IMPORTANTE: contas a pagar/despesas NAO estao disponiveis nesta fonte (contas_a_pagar_disponivel=false). NAO faca afirmacoes sobre despesas, lucro ou DRE.',\n  'PROJECAO DE CAIXA: a loja recebe majoritariamente a vista (cartao/pix), entao quase nao ha recebiveis a prazo em aberto. A projecao_caixa.proximas_4_semanas e uma ESTIMATIVA baseada na media movel das entradas realizadas (media_semanal_entradas) somada a eventuais parcelas a prazo a vencer. Trate-a como estimativa de ritmo de recebimento, NAO como nula. Comente o caixa medio semanal esperado.',\n  'Responda APENAS com um objeto JSON valido (sem markdown, sem code fences, sem texto fora do JSON).',\n  'Tom: de especialista que orienta — claro, didatico e objetivo, portugues BR, foco em decisao. Nenhum jargao sem explicacao.',\n  '',\n  'Schema obrigatorio:',\n  '{',\n  '  \"resumo_executivo\": \"2 a 3 frases citando o intervalo analisado (' + ctx.dataInicial + ' a ' + ctx.dataFinal + '), caixa recebido, total a receber e o principal risco de inadimplencia.\",',\n  '  \"diagnostico\": \"1 paragrafo (4 a 6 frases) explicando O QUE os numeros do intervalo revelam e POR QUE importa, conectando causa e efeito como um orientador faria. Aponte o que e saudavel e o que preocupa.\",',\n  '  \"metodologia\": \"2 a 4 frases dizendo quais metricas/frameworks voce usou (ex.: aging, indice de concentracao, media movel de caixa) e como o gestor deve interpreta-las.\",',\n  '  \"saude_financeira\": \"boa|atencao|critica\",',\n  '  \"blocos\": [ { \"prioridade\": 1, \"severidade\": \"critico|atencao|ok\", \"categoria\": \"rotulo curto (ex.: Inadimplencia, Caixa, Concentracao de carteira, Recebiveis)\", \"titulo\": \"frase curta de destaque\", \"valor\": \"numero/moeda principal do bloco (opcional)\", \"conteudo\": \"1 a 3 frases explicando o achado e a acao sugerida\" } ],',\n  '  \"indicadores\": [ { \"label\": \"string\", \"valor\": \"string com moeda/numero\", \"tom\": \"positivo|atencao|critico\" } ],',\n  '  \"alertas\": [ { \"prioridade\": \"alta|media|baixa\", \"tipo\": \"inadimplencia|concentracao_cliente|fluxo_caixa|outro\", \"titulo\": \"string\", \"detalhe\": \"string\" } ],',\n  '  \"recomendacoes\": [ { \"prioridade\": \"alta|media|baixa\", \"acao\": \"cobrar|renegociar|monitorar|investigar\", \"cliente\": \"nome ou diversos\", \"motivo\": \"string\", \"fundamentacao\": \"por que esta acao, ancorada em um conceito financeiro (ex.: reduzir DSO melhora o ciclo de caixa)\", \"impacto_esperado\": \"string\" } ],',\n  '  \"glossario\": [ { \"termo\": \"string\", \"definicao\": \"explicacao curta e simples do termo usado na analise\" } ]',\n  '}',\n  '',\n  'REGRA DOS BLOCOS (o mais importante): \"blocos\" e a leitura priorizada da pagina. Devolva de 3 a 6 blocos ORDENADOS por prioridade (1 = mais importante PARA A GESTAO FINANCEIRA NESTE INTERVALO). Escolha o que e de fato mais relevante agora — nao siga uma ordem fixa. Use severidade \"critico\" para risco que exige acao imediata, \"atencao\" para acompanhar, \"ok\" para o que esta saudavel.',\n  'Regras: 3 a 6 blocos, 3 a 5 indicadores, 2 a 5 alertas, 2 a 5 recomendacoes, 3 a 5 termos no glossario (apenas os realmente usados). Cite clientes concretos do top_devedores quando fizer sentido. Se faltar sinal, devolva array vazio.'\n].join('\\n');\n\nconst prompt_agente = ['Dados financeiros do periodo:', JSON.stringify(payload), '', 'Gere o JSON conforme o schema do system message.'].join('\\n');\n\nreturn [{ json: { prompt_agente, system_message: system, payload_ia: payload } }];"
+      },
+      "id": "preparar-prompt-fernanda",
+      "name": "Preparar Prompt Fernanda",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1680,
+        400
+      ],
+      "notes": "Monta payload financeiro + system prompt (com blocos dinamicos)."
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "gpt-4o",
+          "mode": "list"
+        },
+        "options": {
+          "temperature": 0.2,
+          "responseFormat": "json_object"
+        }
+      },
+      "id": "openai-fernanda",
+      "name": "OpenAI Fernanda (gpt-4o)",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        1680,
+        600
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "cCFxJ8gcTdB3fTEk",
+          "name": "OpenAI account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.prompt_agente }}",
+        "options": {
+          "systemMessage": "={{ $json.system_message }}"
+        }
+      },
+      "id": "agente-fernanda",
+      "name": "Fernanda Financeiro",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [
+        1860,
+        400
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\nconst raw = item.output || item.text || item.response || '';\nlet ctx = {};\ntry { ctx = $('Preparar Prompt Fernanda').first().json.payload_ia || {}; } catch (e) {}\n\nfunction tryParse(text) {\n  if (!text || typeof text !== 'string') return null;\n  let c = text.trim().replace(/^\\s*```json\\s*/i, '').replace(/\\s*```\\s*$/i, '').replace(/^\\s*```\\s*/, '');\n  try { return JSON.parse(c); } catch (e) {}\n  const m = c.match(/\\{[\\s\\S]*\\}/);\n  if (m) { try { return JSON.parse(m[0]); } catch (e) {} }\n  return null;\n}\n\nfunction normBlocos(arr) {\n  if (!Array.isArray(arr)) return [];\n  const sevOk = { critico: 1, atencao: 1, ok: 1 };\n  return arr\n    .map((b, i) => ({\n      prioridade: Number(b && b.prioridade) || (i + 1),\n      severidade: sevOk[String(b && b.severidade || '').toLowerCase()] ? String(b.severidade).toLowerCase() : 'atencao',\n      categoria: String(b && b.categoria || '').trim(),\n      titulo: String(b && b.titulo || '').trim(),\n      valor: b && b.valor != null ? String(b.valor) : '',\n      conteudo: String(b && b.conteudo || '').trim()\n    }))\n    .filter(b => b.titulo || b.conteudo)\n    .sort((a, b) => a.prioridade - b.prioridade)\n    .slice(0, 6);\n}\n\nconst p = tryParse(raw);\nconst base = { gerado_em: new Date().toISOString(), modelo: 'gpt-4o', agente: 'Fernanda Financeiro', contexto: ctx };\nconst analise = (p && typeof p === 'object') ? {\n  ...base,\n  resumo_executivo: String(p.resumo_executivo || '').trim(),\n  diagnostico: String(p.diagnostico || '').trim(),\n  metodologia: String(p.metodologia || '').trim(),\n  saude_financeira: p.saude_financeira || 'atencao',\n  blocos: normBlocos(p.blocos),\n  indicadores: Array.isArray(p.indicadores) ? p.indicadores.slice(0, 6) : [],\n  alertas: Array.isArray(p.alertas) ? p.alertas.slice(0, 8) : [],\n  recomendacoes: Array.isArray(p.recomendacoes) ? p.recomendacoes.slice(0, 8) : [],\n  glossario: Array.isArray(p.glossario) ? p.glossario.slice(0, 6) : []\n} : {\n  ...base,\n  resumo_executivo: '',\n  diagnostico: '',\n  metodologia: '',\n  saude_financeira: 'indisponivel',\n  blocos: [], indicadores: [], alertas: [], recomendacoes: [], glossario: [],\n  erro: 'Falha ao interpretar resposta do agente',\n  raw: String(raw).slice(0, 400)\n};\n\nreturn [{ json: { analiseFinanceira: analise } }];"
+      },
+      "id": "parse-fernanda",
+      "name": "Parse Fernanda",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2040,
+        400
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const staticData = $getWorkflowStaticData('global');\nconst ctx = $('Preparar Contexto').first().json;\n\nlet financeiro = null;\ntry { financeiro = $('Transformar Financeiro').first().json || null; } catch (e) {}\n\nlet analiseFinanceira = null;\ntry { analiseFinanceira = $('Parse Fernanda').first().json.analiseFinanceira || null; } catch (e) {}\n\nconst atualizadoEm = new Date().toISOString();\n\nstaticData.insightsFinanceiro = {\n  dataInicial: ctx.dataInicial,\n  dataFinal: ctx.dataFinal,\n  dataExecucao: ctx.dataHoje,\n  janelaColeta: ctx.janelaColeta,\n  limiteAplicado: ctx.limiteAplicado || false,\n  maxDias: ctx.maxDias || 90,\n  atualizadoEm,\n  contasReceber: financeiro?.contasReceber || null,\n  fluxoCaixa: financeiro?.fluxoCaixa || null,\n  analiseFinanceira\n};\n\nreturn [{ json: {\n  sucesso: true,\n  dataInicial: ctx.dataInicial,\n  dataFinal: ctx.dataFinal,\n  limiteAplicado: ctx.limiteAplicado || false,\n  atualizadoEm,\n  resumo: analiseFinanceira?.resumo_executivo || null\n} }];"
+      },
+      "id": "salvar-insights",
+      "name": "Salvar Insights",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2220,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "dados-financeiro-ia",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "api-webhook",
+      "name": "API GET /dados",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [
+        240,
+        720
+      ],
+      "webhookId": "insights-financeiro-dados"
+    },
+    {
+      "parameters": {
+        "jsCode": "const staticData = $getWorkflowStaticData('global');\nconst snap = staticData.insightsFinanceiro || null;\n\nif (!snap) {\n  return [{ json: { success: false, error: 'Nenhuma analise financeira coletada ainda. Selecione o intervalo e clique em Atualizar.' } }];\n}\n\nreturn [{ json: {\n  success: true,\n  dataInicial: snap.dataInicial,\n  dataFinal: snap.dataFinal,\n  dataExecucao: snap.dataExecucao,\n  janelaColeta: snap.janelaColeta,\n  limiteAplicado: snap.limiteAplicado || false,\n  maxDias: snap.maxDias || 90,\n  atualizadoEm: snap.atualizadoEm,\n  gerado_em: snap.analiseFinanceira?.gerado_em || snap.atualizadoEm,\n  analise: snap.analiseFinanceira || null,\n  contasReceber: snap.contasReceber || null,\n  fluxoCaixa: snap.fluxoCaixa || null\n} }];"
+      },
+      "id": "api-read-static",
+      "name": "Ler Insights",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        720
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Access-Control-Allow-Origin",
+                "value": "*"
+              },
+              {
+                "name": "Access-Control-Allow-Methods",
+                "value": "GET, OPTIONS"
+              },
+              {
+                "name": "Access-Control-Allow-Headers",
+                "value": "Content-Type, Authorization"
+              },
+              {
+                "name": "Cache-Control",
+                "value": "no-cache"
+              }
+            ]
+          }
+        }
+      },
+      "id": "api-respond",
+      "name": "Responder API",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        720,
+        720
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Insights IA Financeiro (Fernanda)\\n\\nWorkflow independente da pagina.\\n\\n### Coleta\\nPOST `/webhook/coletar-financeiro-ia`\\n```json\\n{ \"dataInicial\": \"2026-04-01\", \"dataFinal\": \"2026-04-30\" }\\n```\\n\\n### Leitura\\nGET `/webhook/dados-financeiro-ia`\\n\\nLe `staticData.insightsFinanceiro` (isolado deste workflow). Teto de 90 dias (3 meses).",
+        "height": 280,
+        "width": 420,
+        "color": 4
+      },
+      "id": "nota-config",
+      "name": "Instrucoes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        240,
+        80
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook Coletar": {
+      "main": [
+        [
+          {
+            "node": "Definir Periodo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Definir Periodo": {
+      "main": [
+        [
+          {
+            "node": "🔐 Autenticar Dapic",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔐 Autenticar Dapic": {
+      "main": [
+        [
+          {
+            "node": "Preparar Contexto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar Contexto": {
+      "main": [
+        [
+          {
+            "node": "Coletar Financeiro",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Coletar Financeiro": {
+      "main": [
+        [
+          {
+            "node": "Transformar Financeiro",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transformar Financeiro": {
+      "main": [
+        [
+          {
+            "node": "Preparar Prompt Fernanda",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar Prompt Fernanda": {
+      "main": [
+        [
+          {
+            "node": "Fernanda Financeiro",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Fernanda (gpt-4o)": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Fernanda Financeiro",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fernanda Financeiro": {
+      "main": [
+        [
+          {
+            "node": "Parse Fernanda",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Fernanda": {
+      "main": [
+        [
+          {
+            "node": "Salvar Insights",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "API GET /dados": {
+      "main": [
+        [
+          {
+            "node": "Ler Insights",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ler Insights": {
+      "main": [
+        [
+          {
+            "node": "Responder API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "timezone": "America/Sao_Paulo",
+    "executionTimeout": 300
+  },
+  "pinData": {},
+  "meta": {
+    "version": "1.0.0",
+    "scope": "insights-financeiro",
+    "builtAt": "2026-05-29T14:00:44.355Z"
+  },
+  "tags": [
+    {
+      "name": "erp"
+    },
+    {
+      "name": "dapic"
+    },
+    {
+      "name": "tech-malhas"
+    },
+    {
+      "name": "insights-ia"
+    }
+  ]
+}

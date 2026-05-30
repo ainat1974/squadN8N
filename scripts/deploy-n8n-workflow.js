@@ -92,16 +92,23 @@ async function listWorkflows() {
 
 async function main() {
   const workflows = await listWorkflows();
-  const candidates = [
-    workflow.name,
+
+  // Nomes legados que devem ser "migrados" para o workflow v3 (renomeacao).
+  // So sao considerados quando o arquivo sendo publicado E o proprio v3,
+  // para nao sobrescrever outro workflow ao publicar um novo por engano.
+  const legacyAliases = [
     'Tech Malhas — Coleta ERP Dapic',
     'Tech Malhas - Coleta ERP Dapic',
     'Tech Malhas - Coleta ERP Dapic Otimizado',
-    'Tech Malhas - ERP Dashboard (Range v3)',
     'Tech Malhas - Relatorio Vendas PDV (D-1)',
   ];
+  const isV3 = workflow.name === 'Tech Malhas - ERP Dashboard (Range v3)';
 
-  const existing = workflows.find(item => candidates.includes(item.name));
+  // Regra principal: casar SEMPRE pelo nome exato do workflow do arquivo.
+  // Fallback de aliases legados apenas para o v3.
+  const existing =
+    workflows.find(item => item.name === workflow.name) ||
+    (isV3 ? workflows.find(item => legacyAliases.includes(item.name)) : undefined);
   const wasActive = Boolean(existing?.active);
   let saved;
 

@@ -56,6 +56,61 @@ export const api = {
   fluxoCaixa: (options?: FetchModuloOptions) => fetchModulo('fluxo-caixa', options),
 }
 
+// ============================================================
+// Workflow INDEPENDENTE: Insights IA Financeiro (Fernanda)
+// Webhooks proprios, snapshot isolado, intervalo proprio.
+// ============================================================
+
+/** Le o ultimo snapshot da analise financeira gerada pela Fernanda. */
+export async function fetchInsightsFinanceiro() {
+  const res = await fetch(`${BASE_URL}/webhook/dados-financeiro-ia`, {
+    headers: { Accept: 'application/json' },
+  })
+  if (!res.ok) throw new Error(`Erro ao buscar insights financeiro: ${res.status}`)
+  const json = await res.json()
+  if (json && json.success === false) {
+    throw new Error(json.error || 'Análise financeira ainda não gerada')
+  }
+  return json
+}
+
+/** Dispara a coleta + analise da Fernanda para o intervalo informado. */
+export async function triggerInsightsFinanceiro(dataInicial: string, dataFinal: string) {
+  const res = await fetch(`${N8N_HOST}/webhook/coletar-financeiro-ia`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ dataInicial, dataFinal }),
+  })
+  if (!res.ok) throw new Error(`Falha ao iniciar analise financeira: ${res.status}`)
+}
+
+// ============================================================
+// Workflow INDEPENDENTE: Visao Geral (landing de decisao, sem GPT)
+// ============================================================
+
+/** Le o snapshot da Visao Geral (KPIs, prioridades, saude, graficos). */
+export async function fetchOverview() {
+  const res = await fetch(`${BASE_URL}/webhook/dados-overview`, {
+    headers: { Accept: 'application/json' },
+  })
+  if (!res.ok) throw new Error(`Erro ao buscar Visao Geral: ${res.status}`)
+  const json = await res.json()
+  if (json && json.success === false) {
+    throw new Error(json.error || 'Visao Geral ainda nao coletada')
+  }
+  return json
+}
+
+/** Dispara a coleta da Visao Geral para o intervalo informado. */
+export async function triggerOverview(dataInicial: string, dataFinal: string) {
+  const res = await fetch(`${N8N_HOST}/webhook/coletar-overview`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ dataInicial, dataFinal }),
+  })
+  if (!res.ok) throw new Error(`Falha ao iniciar coleta da Visao Geral: ${res.status}`)
+}
+
 export function formatBRL(value: number): string {
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value)
 }

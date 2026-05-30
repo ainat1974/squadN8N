@@ -67,7 +67,7 @@ export default function LoginPage() {
       if (/invalid login credentials/i.test(msg)) {
         setErro('E-mail ou senha incorretos.')
       } else if (/email not confirmed/i.test(msg)) {
-        setErro('E-mail ainda nao confirmado. Verifique sua caixa de entrada.')
+        setErro('E-mail ainda não confirmado. Verifique sua caixa de entrada.')
       } else {
         setErro(msg)
       }

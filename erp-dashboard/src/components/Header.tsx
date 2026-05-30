@@ -1,13 +1,44 @@
 import { useEffect, useRef } from 'react'
+import { useLocation } from 'react-router-dom'
 import { api, formatDate } from '../services/api'
 import { usePeriod } from '../context/PeriodContext'
 import { useErpData } from '../hooks/useErpData'
 import { useTriggerColeta } from '../hooks/useTriggerColeta'
+import { useSidebar } from '../context/SidebarContext'
 import { buildApiOptions } from '../utils/period'
 import { formatRangeLabel } from '../utils/dateRange'
 import { StatusPill } from './DashboardPrimitives'
 
+function MenuButton() {
+  const { toggleMobile } = useSidebar()
+  return (
+    <button
+      type="button"
+      onClick={toggleMobile}
+      aria-label="Abrir menu"
+      className="menu-button grid h-10 w-10 shrink-0 place-items-center rounded-lg border border-[var(--border)] text-[var(--text-secondary)] transition-colors hover:border-[var(--border-strong)] hover:bg-white/[0.05] hover:text-[var(--accent)] md:hidden"
+    >
+      <svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden="true">
+        <path d="M2 4h14M2 9h14M2 14h14" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      </svg>
+    </button>
+  )
+}
+
 const AUTO_COLETA_DEBOUNCE_MS = 1500
+
+// Rotas que ja possuem workflow + seletor proprios (arquitetura desacoplada).
+// Nelas o topbar global nao exibe controles de coleta (a pagina cuida disso).
+// Rotas que têm seletor próprio na página (DateRangePicker + botão Atualizar).
+// Nelas o topbar global fica enxuto: a página assume o controle do período.
+const MIGRATED_ROUTES = [
+  '/visao-geral',
+  '/insights-financeiro',
+  '/insights-estoque',
+  '/vendas',
+  '/estoque',
+  '/financeiro',
+]
 
 function formatTime(iso: string | null | undefined) {
   if (!iso) return null
@@ -37,6 +68,7 @@ function describeUltimaConsulta(meta: Record<string, unknown> | null | undefined
 }
 
 export default function Header() {
+  const migrated = MIGRATED_ROUTES.includes(useLocation().pathname)
   const { range, hydrate, touched } = usePeriod()
   const { state, run, isBusy } = useTriggerColeta()
   const fetchOptions = buildApiOptions(range)
@@ -50,8 +82,9 @@ export default function Header() {
 
   // Ao abrir, alinha o filtro ao ultimo intervalo coletado (uma unica vez).
   useEffect(() => {
+    if (migrated) return
     if (collectedIni && collectedFim) hydrate({ dataInicial: collectedIni, dataFinal: collectedFim })
-  }, [collectedIni, collectedFim, hydrate])
+  }, [migrated, collectedIni, collectedFim, hydrate])
 
   // Auto-coleta: quando o usuario muda o intervalo e ele difere do coletado,
   // dispara a coleta automaticamente (com debounce e trava anti-duplicidade).
@@ -60,16 +93,31 @@ export default function Header() {
   const selectedKey = `${range.dataInicial}|${range.dataFinal}`
   const collectedKey = collectedIni && collectedFim ? `${collectedIni}|${collectedFim}` : null
   useEffect(() => {
+    if (migrated) return
     if (!touched || !collectedKey || isBusy) return
     if (selectedKey === collectedKey) return
     const t = setTimeout(() => runRef.current(atualizadoEm), AUTO_COLETA_DEBOUNCE_MS)
     return () => clearTimeout(t)
-  }, [touched, selectedKey, collectedKey, isBusy, atualizadoEm])
+  }, [migrated, touched, selectedKey, collectedKey, isBusy, atualizadoEm])
 
   const intervaloPendente = Boolean(touched && collectedKey && selectedKey !== collectedKey)
 
+  // Em rotas migradas, o topbar fica enxuto (a pagina tem seu proprio seletor).
+  if (migrated) {
+    return (
+      <header className="topbar flex shrink-0 items-center gap-3 px-4 md:px-6">
+        <MenuButton />
+        <div className="min-w-0">
+          <p className="m-0 text-xs font-bold text-[var(--text-secondary)]">Tech Malhas · ERP</p>
+          <p className="m-0 truncate text-xs text-[var(--text-muted)]">Período e atualização definidos nesta página</p>
+        </div>
+      </header>
+    )
+  }
+
   return (
     <header className="topbar flex shrink-0 items-center gap-3 px-4 md:px-6">
+      <MenuButton />
       <div className="hidden min-w-0 md:block">
         <p className="m-0 text-xs font-bold text-[var(--text-secondary)]">Intervalo selecionado</p>
         <p className="m-0 truncate text-xs text-[var(--text-muted)]">

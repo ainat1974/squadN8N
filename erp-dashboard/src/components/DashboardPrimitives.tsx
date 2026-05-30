@@ -62,14 +62,17 @@ export function MetricCard({
   value,
   detail,
   tone = 'orange',
+  compact = false,
 }: {
   label: string
   value: string
   detail?: string | null
   tone?: Tone
+  /** Usa fonte e padding reduzidos — bom para KPI strips com 4+ colunas. */
+  compact?: boolean
 }) {
   return (
-    <div className="metric-card">
+    <div className={`metric-card${compact ? ' metric-card--compact' : ''}`}>
       <span>{label}</span>
       <strong className={toneClass[tone]}>{value}</strong>
       {detail && <small>{detail}</small>}

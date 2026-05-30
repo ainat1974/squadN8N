@@ -33,7 +33,7 @@ export function daysInRange(dataInicial: string, dataFinal: string): number {
 export function clampRange(range: DateRange): DateRange {
   let { dataInicial, dataFinal } = range
   if (dataInicial > dataFinal) {
-    ;[dataInicial, dataFinal] = [dataFinal, dataInicial]
+    [dataInicial, dataFinal] = [dataFinal, dataInicial]
   }
   if (daysInRange(dataInicial, dataFinal) > MAX_RANGE_DAYS) {
     dataInicial = addDays(dataFinal, -(MAX_RANGE_DAYS - 1))

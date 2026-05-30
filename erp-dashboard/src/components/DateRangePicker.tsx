@@ -1,4 +1,4 @@
-import { usePeriod, type DateRangePreset } from '../context/PeriodContext'
+import { usePeriod, type DateRange, type DateRangePreset } from '../context/PeriodContext'
 import { formatRangeLabel, MAX_RANGE_DAYS } from '../utils/dateRange'
 
 const PRESETS: { id: DateRangePreset; label: string }[] = [
@@ -14,10 +14,32 @@ type Props = {
   showAtualizar?: boolean
   onAtualizar?: () => void
   atualizando?: boolean
+  /** Modo controlado: quando fornecido, ignora o PeriodContext global.
+   *  Permite que cada pagina tenha seu proprio intervalo independente. */
+  value?: DateRange
+  onChange?: (range: DateRange) => void
+  onPreset?: (preset: DateRangePreset) => void
+  /** Mensagem opcional exibida abaixo do label (ex.: aviso de teto). */
+  note?: string | null
+  /** Oculta os botoes de preset (Hoje, 7 dias, Este mes...). */
+  hidePresets?: boolean
 }
 
-export default function DateRangePicker({ showAtualizar, onAtualizar, atualizando }: Props) {
-  const { range, setRange, applyPreset } = usePeriod()
+export default function DateRangePicker({
+  showAtualizar,
+  onAtualizar,
+  atualizando,
+  value,
+  onChange,
+  onPreset,
+  note,
+  hidePresets,
+}: Props) {
+  const ctx = usePeriod()
+  const controlled = value !== undefined && onChange !== undefined
+  const range = controlled ? value : ctx.range
+  const setRange = controlled ? onChange : ctx.setRange
+  const applyPreset = controlled ? (onPreset ?? (() => {})) : ctx.applyPreset
 
   return (
     <div className="date-range-picker rounded-xl border border-[var(--border)] bg-black/30 p-4">
@@ -28,8 +50,9 @@ export default function DateRangePicker({ showAtualizar, onAtualizar, atualizand
           </p>
           <p className="m-0 mt-1 text-sm text-[var(--text-muted)]">
             {formatRangeLabel(range.dataInicial, range.dataFinal)}
-            <span className="ml-2 text-[var(--text-muted)]">(máx. {MAX_RANGE_DAYS} dias)</span>
+            <span className="ml-2 text-[var(--text-muted)]">(máx. 3 meses · {MAX_RANGE_DAYS} dias)</span>
           </p>
+          {note && <p className="m-0 mt-1 text-xs font-bold text-[var(--accent)]">{note}</p>}
         </div>
 
         <div className="flex w-full flex-wrap items-end gap-3 lg:w-auto">
@@ -71,18 +94,20 @@ export default function DateRangePicker({ showAtualizar, onAtualizar, atualizand
         </div>
       </div>
 
-      <div className="mt-3 flex flex-wrap gap-2">
-        {PRESETS.map(p => (
-          <button
-            key={p.id}
-            type="button"
-            className="period-button px-3 text-xs font-bold"
-            onClick={() => applyPreset(p.id)}
-          >
-            {p.label}
-          </button>
-        ))}
-      </div>
+      {!hidePresets && (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {PRESETS.map(p => (
+            <button
+              key={p.id}
+              type="button"
+              className="period-button px-3 text-xs font-bold"
+              onClick={() => applyPreset(p.id)}
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
