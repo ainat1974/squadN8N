@@ -72,7 +72,7 @@ type Recomendacao = { prioridade?: string; area?: string; acao?: string; fundame
 // endpoint /v1/vendaspdv (que traz Cliente identificado). Ainda nao
 // integrado ao workflow — aguardando aprovacao visual.
 // =====================================================================
-const PREVIEW_TOP_CLIENTES = true
+const PREVIEW_TOP_CLIENTES = false
 const TOP_CLIENTES_MOCK = [
   { cliente: 'VINICIUS TAKAGI REIS', valor_total: 44451.0, vendas: 3 },
   { cliente: 'DENIS COSTA', valor_total: 44249.1, vendas: 6 },
@@ -87,10 +87,11 @@ const TOP_CLIENTES_MOCK = [
 ]
 
 // =====================================================================
-// PREVIEW: como a página ficaria com o agente "Diego — Diretor Executivo"
-// (dados MOCKADOS, só para validar visualmente — nada está no n8n ainda)
+// DIEGO — Diretor Executivo cross-domain (workflow Visao Geral).
+// Fonte real: d.analise (gerado pelo agente gpt-4o no N8N).
+// PREVIEW_DIEGO=true regride a UI para o mock visual de referencia.
 // =====================================================================
-const PREVIEW_DIEGO = true
+const PREVIEW_DIEGO = false
 const DIEGO_MOCK = {
   agente: 'Diego — Diretor Executivo',
   modelo: 'gpt-4o',
@@ -183,6 +184,15 @@ function fmtDia(iso?: string) {
   return iso ? iso.split('-').reverse().join('/') : ''
 }
 
+/** CK-OV-1: anexa o intervalo coletado como query string para que a pagina
+ *  destino aplique o mesmo periodo automaticamente. */
+function withRange(path: string | undefined, di?: string, df?: string) {
+  if (!path) return path
+  if (!di || !df) return path
+  const sep = path.includes('?') ? '&' : '?'
+  return `${path}${sep}dataInicial=${di}&dataFinal=${df}`
+}
+
 function VariacaoBadge({ v }: { v?: number | null }) {
   if (v == null) return <span className="text-[11px] text-[var(--text-muted)]">sem comparativo</span>
   const up = v >= 0
@@ -204,6 +214,43 @@ export default function OverviewPage() {
   const graficos = d?.graficos || {}
   const tabelas = d?.tabelas || {}
   const periodoLabel = d?.dataInicial && d?.dataFinal ? formatRangeLabel(d.dataInicial, d.dataFinal) : null
+
+  // Diego (cross-domain) — preferencia: PREVIEW (mock) > backend real.
+  // Quando o agente real falha no n8n, "diego" fica null e a UI usa
+  // o fallback deterministico da Central de Prioridades sem traumas.
+  const analiseDiego = d?.analise as Record<string, any> | null
+  const diego = PREVIEW_DIEGO
+    ? DIEGO_MOCK
+    : analiseDiego && (analiseDiego.resumo_executivo || (Array.isArray(analiseDiego.blocos) && analiseDiego.blocos.length > 0))
+      ? {
+          agente: analiseDiego.agente || 'Diego — Diretor Executivo',
+          modelo: analiseDiego.modelo || 'gpt-4o',
+          resumo_executivo: analiseDiego.resumo_executivo || '',
+          diagnostico: analiseDiego.diagnostico || '',
+          blocos: ((analiseDiego.blocos as any[]) || []).map((b) => ({
+            severidade: String(b.severidade || 'atencao').toLowerCase(),
+            categoria: b.categoria,
+            titulo: b.titulo,
+            valor: b.valor,
+            conteudo: b.conteudo,
+            link:
+              b.area === 'vendas'
+                ? '/vendas'
+                : b.area === 'estoque'
+                  ? '/estoque'
+                  : b.area === 'financeiro'
+                    ? '/financeiro'
+                    : '/insights-financeiro',
+          })) as Prioridade[],
+          recomendacoes: ((analiseDiego.recomendacoes as any[]) || []).map((r) => ({
+            prioridade: r.prioridade,
+            area: r.area,
+            acao: r.acao,
+            fundamentacao: r.fundamentacao,
+            impacto: r.impacto_esperado || r.impacto,
+          })) as Recomendacao[],
+        }
+      : null
   const anteriorLabel = d?.periodoAnterior?.inicio
     ? formatRangeLabel(d.periodoAnterior.inicio, d.periodoAnterior.fim)
     : null
@@ -281,33 +328,39 @@ export default function OverviewPage() {
             ))}
           </div>
 
-          {/* ===== PREVIEW: Diretor Executivo (Diego) — visual mockup ===== */}
-          {PREVIEW_DIEGO && (
+          {/* ===== Diretor Executivo (Diego) — leitura cross-domain ===== */}
+          {diego && (
             <>
-              <div className="mt-4 rounded-2xl border border-dashed border-[var(--accent)]/50 bg-[var(--accent-soft)]/30 p-4">
-                <div className="mb-3 flex flex-wrap items-center gap-2">
-                  <StatusPill tone="orange">PREVIEW</StatusPill>
-                  <span className="text-[11px] font-extrabold uppercase tracking-tight text-[var(--accent)]">
-                    Como ficaria com o agente Diego — Diretor Executivo (dados mockados, ainda não no n8n)
-                  </span>
-                </div>
+              <div className={`mt-4 ${PREVIEW_DIEGO ? 'rounded-2xl border border-dashed border-[var(--accent)]/50 bg-[var(--accent-soft)]/30 p-4' : ''}`}>
+                {PREVIEW_DIEGO && (
+                  <div className="mb-3 flex flex-wrap items-center gap-2">
+                    <StatusPill tone="orange">PREVIEW</StatusPill>
+                    <span className="text-[11px] font-extrabold uppercase tracking-tight text-[var(--accent)]">
+                      Mock visual — fonte oficial é d.analise do workflow Visão Geral
+                    </span>
+                  </div>
+                )}
 
-                <Panel title={DIEGO_MOCK.agente} subtitle="Leitura cross-domain do período (vendas + caixa + estoque)">
+                <Panel title={diego.agente} subtitle="Leitura cross-domain do período (vendas + caixa + estoque)">
                   <div className="p-5">
-                    <p className="m-0 text-sm leading-relaxed text-[var(--text-primary)]">{DIEGO_MOCK.resumo_executivo}</p>
-                    <div className="mt-4 rounded-xl border border-[var(--border)] bg-white/[0.03] p-4">
-                      <div className="text-[11px] font-extrabold uppercase tracking-tight text-[var(--accent)]">
-                        Diagnóstico cross-domain
+                    {diego.resumo_executivo && (
+                      <p className="m-0 text-sm leading-relaxed text-[var(--text-primary)]">{diego.resumo_executivo}</p>
+                    )}
+                    {diego.diagnostico && (
+                      <div className="mt-4 rounded-xl border border-[var(--border)] bg-white/[0.03] p-4">
+                        <div className="text-[11px] font-extrabold uppercase tracking-tight text-[var(--accent)]">
+                          Diagnóstico cross-domain
+                        </div>
+                        <p className="m-0 mt-1.5 text-sm leading-relaxed text-[var(--text-secondary)]">{diego.diagnostico}</p>
                       </div>
-                      <p className="m-0 mt-1.5 text-sm leading-relaxed text-[var(--text-secondary)]">{DIEGO_MOCK.diagnostico}</p>
-                    </div>
+                    )}
                   </div>
                 </Panel>
 
                 <div className="mt-4">
                   <Panel title="Central de Prioridades (priorizada pelo Diego)" subtitle="Blocos cross-domain ordenados por severidade pelo agente">
                     <div className="grid grid-cols-1 gap-3 p-4 md:grid-cols-2 xl:grid-cols-3">
-                      {DIEGO_MOCK.blocos.map((b, idx) => {
+                      {diego.blocos.map((b, idx) => {
                         const sev = String(b.severidade || 'atencao').toLowerCase()
                         return (
                           <div
@@ -332,7 +385,7 @@ export default function OverviewPage() {
                               </p>
                             )}
                             {b.link && sev !== 'ok' && (
-                              <NavLink to={b.link} className="action-button mt-3 flex items-center justify-center px-3 text-xs font-bold">
+                              <NavLink to={withRange(b.link, d?.dataInicial, d?.dataFinal) || b.link} className="action-button mt-3 flex items-center justify-center px-3 text-xs font-bold">
                                 Ver detalhe
                               </NavLink>
                             )}
@@ -346,7 +399,7 @@ export default function OverviewPage() {
                 <div className="mt-4">
                   <Panel title="Recomendações Executivas (Diego)" subtitle="Ações priorizadas cross-domain, com fundamentação e impacto esperado">
                     <div className="space-y-2 p-4">
-                      {DIEGO_MOCK.recomendacoes.map((r, idx) => (
+                      {diego.recomendacoes.map((r, idx) => (
                         <div key={`rec-${idx}`} className="hover-card-soft overflow-hidden rounded-xl border border-[var(--border)] bg-white/[0.02] p-3">
                           <div className="flex flex-wrap items-center gap-2">
                             <StatusPill tone={r.prioridade === 'alta' ? 'red' : r.prioridade === 'media' ? 'orange' : 'blue'}>
@@ -373,15 +426,12 @@ export default function OverviewPage() {
           )}
           {/* ===== FIM DO PREVIEW DIEGO ===== */}
 
-          {/* 2. Central de Prioridades (versão determinística — atual / fallback) */}
+          {/* 2. Central de Prioridades (versão determinística — fallback se o Diego não estiver disponível) */}
+          {!diego && (
           <div className="mt-4">
             <Panel
-              title={PREVIEW_DIEGO ? 'Central de Prioridades (versão determinística — atual)' : 'Central de Prioridades'}
-              subtitle={
-                PREVIEW_DIEGO
-                  ? 'Calculada por regras de severidade (mostrada para comparação com a versão do Diego acima)'
-                  : 'O que merece sua atenção agora — ordenado por severidade'
-              }
+              title="Central de Prioridades"
+              subtitle="O que merece sua atenção agora — calculada por regras de severidade"
             >
               <div className="grid grid-cols-1 gap-3 p-4 md:grid-cols-2 xl:grid-cols-3">
                 {prioridades.map((p, idx) => {
@@ -406,7 +456,7 @@ export default function OverviewPage() {
                         </p>
                       )}
                       {p.link && sev !== 'ok' && (
-                        <NavLink to={p.link} className="action-button mt-3 flex items-center justify-center px-3 text-xs font-bold">
+                        <NavLink to={withRange(p.link, d?.dataInicial, d?.dataFinal) || p.link} className="action-button mt-3 flex items-center justify-center px-3 text-xs font-bold">
                           Ver detalhe
                         </NavLink>
                       )}
@@ -416,6 +466,7 @@ export default function OverviewPage() {
               </div>
             </Panel>
           </div>
+          )}
 
           {/* 3. Saude por area (semaforo) */}
           <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
@@ -431,7 +482,7 @@ export default function OverviewPage() {
                   <div className="mt-2 break-words text-base font-extrabold tabular-nums text-[var(--text-primary)]">{s.ancora}</div>
                   {s.detalhe && <div className="break-words text-xs text-[var(--text-muted)]">{s.detalhe}</div>}
                   {s.link && (
-                    <NavLink to={s.link} className="action-button mt-3 flex items-center justify-center px-3 text-xs font-bold">
+                    <NavLink to={withRange(s.link, d?.dataInicial, d?.dataFinal) || s.link} className="action-button mt-3 flex items-center justify-center px-3 text-xs font-bold">
                       Abrir {a.label}
                     </NavLink>
                   )}

@@ -247,7 +247,7 @@ const relatorio = {
     receita_b2b: 0
   },
   produtos_vendidos: produtos,
-  top_produtos: produtos.slice(0, 10),
+  top_produtos: produtos.slice(0, 20),
   evolucao_diaria,
   top_clientes: [],
   por_representante: []
@@ -922,6 +922,30 @@ try {
 }
 
 const atualizadoEm = new Date().toISOString();
+
+// Enriquecer Vendas com Estoque atual dos Top 20 (CK-VD-1).
+// Cruza top_produtos (codigo) com estoque.linhas (variacoes do mesmo codigo)
+// e expoe: estoque_top10 (lista de produtos top 20) e
+// estoque_top10_linhas (todas as variacoes de estoque dos top 20).
+try {
+  if (vendas && (vendas.top_produtos || []).length > 0 && (estoque.linhas || []).length > 0) {
+    const top20 = (vendas.top_produtos || []).slice(0, 20);
+    const codigosTop = new Set(top20.map(p => p.codigo).filter(Boolean));
+    vendas.estoque_top10 = top20.map(p => ({ codigo: p.codigo, produto: p.produto }));
+    vendas.estoque_top10_linhas = (estoque.linhas || [])
+      .filter(l => codigosTop.has(l.codigo))
+      .map(l => ({
+        codigo: l.codigo,
+        produto: l.produto,
+        cor: l.cor,
+        tamanho: l.tamanho,
+        quantidade: Number(l.estoque_atual || 0)
+      }))
+      .sort((a, b) => (a.produto || '').localeCompare(b.produto || '') || (a.cor || '').localeCompare(b.cor || '') || (a.tamanho || '').localeCompare(b.tamanho || ''));
+  }
+} catch (e) {
+  console.log('Cruzamento Top 20 x estoque indisponivel: ' + (e.message || e));
+}
 
 if (!staticData.erp) staticData.erp = {};
 

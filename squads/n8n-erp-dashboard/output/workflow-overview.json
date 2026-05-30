@@ -195,14 +195,87 @@
     },
     {
       "parameters": {
-        "jsCode": "const staticData = $getWorkflowStaticData('global');\nconst resumo = $('Montar Resumo').first().json;\nconst atualizadoEm = new Date().toISOString();\nstaticData.overview = { ...resumo, atualizadoEm };\nreturn [{ json: { sucesso: true, dataInicial: resumo.dataInicial, dataFinal: resumo.dataFinal, atualizadoEm } }];"
+        "jsCode": "const ctx = $('Preparar Contexto').first().json;\nconst resumo = $('Montar Resumo').first().json || {};\nlet vendas = {}, estoque = {}, fin = {};\ntry { vendas = $('Transformar Vendas').first().json.dados || {}; } catch (e) {}\ntry { estoque = $('Transformar Estoque').first().json.dados || {}; } catch (e) {}\ntry { fin = $('Transformar Financeiro').first().json || {}; } catch (e) {}\n\nconst num = (v) => Number(v || 0) || 0;\nconst round = (v) => Math.round((Number(v) || 0) * 100) / 100;\n\nconst payload = {\n  periodo: { inicio: ctx.dataInicial, fim: ctx.dataFinal, dias: ctx.diasIntervalo || 1 },\n  periodo_anterior: { inicio: ctx.dataInicialAnterior, fim: ctx.dataFinalAnterior },\n  kpis: resumo.kpis || [],\n  trends: resumo.trends || {},\n  saude: resumo.saude || {},\n  prioridades_deterministicas: (resumo.prioridades || []).slice(0, 6),\n  vendas: {\n    receita: round(num(vendas.summary && vendas.summary.receita_total)),\n    volume: num(vendas.summary && vendas.summary.volume_vendas),\n    ticket_medio: round(num(vendas.summary && vendas.summary.ticket_medio)),\n    top_produtos: (vendas.top_produtos || []).slice(0, 5)\n  },\n  estoque: {\n    skus_criticos: num(estoque.summary && estoque.summary.skus_criticos),\n    skus_alerta: num(estoque.summary && estoque.summary.skus_alerta),\n    capital_estoque: round(num(estoque.summary && estoque.summary.valor_total_estoque))\n  },\n  financeiro: {\n    caixa_recebido: round(num(fin.fluxoCaixa && fin.fluxoCaixa.summary && fin.fluxoCaixa.summary.pagamentos_realizados)),\n    a_receber: round(num(fin.contasReceber && fin.contasReceber.summary && fin.contasReceber.summary.total_aberto)),\n    vencido: round(num(fin.contasReceber && fin.contasReceber.summary && fin.contasReceber.summary.total_vencido)),\n    top_devedores: (fin.contasReceber && fin.contasReceber.top_devedores || []).slice(0, 5)\n  }\n};\n\nconst system = [\n  'Voce e Diego, diretor executivo (CEO/COO) com 20 anos de varejo e operacao de pequena e media empresa. Atua como mentor do gestor da Tech Malhas (malharia em Franca/SP).',\n  'Sua tarefa: dar uma leitura EXECUTIVA cross-domain do intervalo selecionado (' + ctx.dataInicial + ' a ' + ctx.dataFinal + '). Conecte vendas, estoque e financeiro em uma narrativa unica de decisao.',\n  'CONTEXTO TEMPORAL: a analise e PONTUAL e refere-se aos eventos do intervalo. Vendas e caixa recebido seguem o intervalo. Estoque e snapshot atual. Variacoes \"vs anterior\" comparam com a janela imediatamente anterior de mesmo tamanho.',\n  'NUNCA invente numeros — use APENAS os valores do JSON enviado. Seja didatico: ao citar conceitos (margem, ciclo, ruptura), explique brevemente.',\n  'Responda APENAS com objeto JSON valido (sem markdown, sem code fences).',\n  'Tom: estrategico e direto, portugues BR, foco em DECISAO. Nada de jargao sem explicacao.',\n  '',\n  'Schema obrigatorio:',\n  '{',\n  '  \"resumo_executivo\": \"2 a 4 frases sobre o intervalo: o que aconteceu, o que mais importa, qual a acao prioritaria.\",',\n  '  \"diagnostico\": \"1 paragrafo (4 a 6 frases) cruzando vendas + estoque + financeiro. Explique como uma area afeta a outra.\",',\n  '  \"metodologia\": \"2 a 3 frases dizendo quais sinais voce olhou (variacao vs anterior, concentracao, ruptura, inadimplencia) e como ler.\",',\n  '  \"saude_geral\": \"boa|atencao|critica\",',\n  '  \"blocos\": [ { \"prioridade\": 1, \"severidade\": \"critico|atencao|ok\", \"categoria\": \"rotulo curto\", \"titulo\": \"frase de destaque\", \"valor\": \"numero/moeda principal (opcional)\", \"area\": \"vendas|estoque|financeiro|geral\", \"conteudo\": \"1 a 3 frases com o achado e a acao\" } ],',\n  '  \"recomendacoes\": [ { \"prioridade\": \"alta|media|baixa\", \"acao\": \"string curta\", \"area\": \"vendas|estoque|financeiro|geral\", \"motivo\": \"string\", \"fundamentacao\": \"ancorada em um conceito de gestao\", \"impacto_esperado\": \"string\" } ],',\n  '  \"proximos_passos\": [ \"string acionavel 1\", \"string acionavel 2\", \"string acionavel 3\" ]',\n  '}',\n  '',\n  'REGRA DOS BLOCOS: 3 a 6 blocos ORDENADOS por prioridade. Cada bloco indica a area de origem. Use \"critico\" para risco que exige acao imediata, \"atencao\" para acompanhar, \"ok\" para saudavel.',\n  'Regras: 3 a 6 blocos, 2 a 5 recomendacoes, 3 a 5 proximos passos.'\n].join('\\n');\n\nconst prompt_agente = ['Snapshot executivo do periodo:', JSON.stringify(payload), '', 'Gere o JSON conforme o schema.'].join('\\n');\n\nreturn [{ json: { prompt_agente, system_message: system, payload_ia: payload } }];"
+      },
+      "id": "preparar-prompt-diego",
+      "name": "Preparar Prompt Diego",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3120,
+        400
+      ],
+      "notes": "Cross-domain executivo: vendas + estoque + financeiro"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "gpt-4o",
+          "mode": "list"
+        },
+        "options": {
+          "temperature": 0.2,
+          "responseFormat": "json_object"
+        }
+      },
+      "id": "openai-diego",
+      "name": "OpenAI Diego (gpt-4o)",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        3120,
+        600
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "cCFxJ8gcTdB3fTEk",
+          "name": "OpenAI account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.prompt_agente }}",
+        "options": {
+          "systemMessage": "={{ $json.system_message }}"
+        }
+      },
+      "id": "agente-diego",
+      "name": "Diego Executivo",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [
+        3300,
+        400
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\nconst raw = item.output || item.text || item.response || '';\nlet ctx = {};\ntry { ctx = $('Preparar Prompt Diego').first().json.payload_ia || {}; } catch (e) {}\n\nfunction tryParse(text) {\n  if (!text || typeof text !== 'string') return null;\n  let c = text.trim().replace(/^\\s*```json\\s*/i, '').replace(/\\s*```\\s*$/i, '').replace(/^\\s*```\\s*/, '');\n  try { return JSON.parse(c); } catch (e) {}\n  const m = c.match(/\\{[\\s\\S]*\\}/);\n  if (m) { try { return JSON.parse(m[0]); } catch (e) {} }\n  return null;\n}\n\nfunction normBlocos(arr) {\n  if (!Array.isArray(arr)) return [];\n  const sevOk = { critico: 1, atencao: 1, ok: 1 };\n  return arr\n    .map((b, i) => ({\n      prioridade: Number(b && b.prioridade) || (i + 1),\n      severidade: sevOk[String(b && b.severidade || '').toLowerCase()] ? String(b.severidade).toLowerCase() : 'atencao',\n      categoria: String(b && b.categoria || '').trim(),\n      titulo: String(b && b.titulo || '').trim(),\n      valor: b && b.valor != null ? String(b.valor) : '',\n      area: String(b && b.area || 'geral').toLowerCase(),\n      conteudo: String(b && b.conteudo || '').trim()\n    }))\n    .filter(b => b.titulo || b.conteudo)\n    .sort((a, b) => a.prioridade - b.prioridade)\n    .slice(0, 6);\n}\n\nconst p = tryParse(raw);\nconst base = { gerado_em: new Date().toISOString(), modelo: 'gpt-4o', agente: 'Diego Executivo', contexto: ctx };\nconst analise = (p && typeof p === 'object') ? {\n  ...base,\n  resumo_executivo: String(p.resumo_executivo || '').trim(),\n  diagnostico: String(p.diagnostico || '').trim(),\n  metodologia: String(p.metodologia || '').trim(),\n  saude_geral: p.saude_geral || 'atencao',\n  blocos: normBlocos(p.blocos),\n  recomendacoes: Array.isArray(p.recomendacoes) ? p.recomendacoes.slice(0, 6) : [],\n  proximos_passos: Array.isArray(p.proximos_passos) ? p.proximos_passos.slice(0, 5) : []\n} : {\n  ...base,\n  resumo_executivo: '',\n  diagnostico: '',\n  metodologia: '',\n  saude_geral: 'indisponivel',\n  blocos: [], recomendacoes: [], proximos_passos: [],\n  erro: 'Falha ao interpretar resposta do agente',\n  raw: String(raw).slice(0, 400)\n};\n\nreturn [{ json: { analiseDiego: analise } }];"
+      },
+      "id": "parse-diego",
+      "name": "Parse Diego",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3480,
+        400
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const staticData = $getWorkflowStaticData('global');\nconst resumo = $('Montar Resumo').first().json;\nlet analiseDiego = null;\ntry { analiseDiego = $('Parse Diego').first().json.analiseDiego || null; } catch (e) {}\n\nconst atualizadoEm = new Date().toISOString();\nstaticData.overview = { ...resumo, analise: analiseDiego, atualizadoEm };\nreturn [{ json: { sucesso: true, dataInicial: resumo.dataInicial, dataFinal: resumo.dataFinal, atualizadoEm, agente: analiseDiego?.agente || null } }];"
       },
       "id": "salvar-overview",
       "name": "Salvar Overview",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        3120,
+        3660,
         400
       ]
     },
@@ -399,6 +472,50 @@
       "main": [
         [
           {
+            "node": "Preparar Prompt Diego",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar Prompt Diego": {
+      "main": [
+        [
+          {
+            "node": "Diego Executivo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Diego (gpt-4o)": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Diego Executivo",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Diego Executivo": {
+      "main": [
+        [
+          {
+            "node": "Parse Diego",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Diego": {
+      "main": [
+        [
+          {
             "node": "Salvar Overview",
             "type": "main",
             "index": 0
@@ -440,7 +557,7 @@
   "meta": {
     "version": "1.0.0",
     "scope": "overview-landing",
-    "builtAt": "2026-05-29T15:37:55.646Z"
+    "builtAt": "2026-05-30T01:40:01.385Z"
   },
   "tags": [
     {

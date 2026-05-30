@@ -1,0 +1,516 @@
+{
+  "name": "Tech Malhas - Insights IA Estoque",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "coletar-estoque-ia",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "trigger-webhook",
+      "name": "Webhook Coletar",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [
+        240,
+        400
+      ],
+      "webhookId": "insights-estoque-coletar",
+      "notes": "POST /webhook/coletar-estoque-ia body: { dataInicial, dataFinal } YYYY-MM-DD"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json || {};\nconst body = input.body || input.json || input;\nconst MAX = 90;\nconst hoje = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date());\n\nlet dataInicial = String(body.dataInicial || body.DataInicial || hoje).slice(0, 10);\nlet dataFinal = String(body.dataFinal || body.DataFinal || hoje).slice(0, 10);\n\nif (dataInicial > dataFinal) {\n  const tmp = dataInicial;\n  dataInicial = dataFinal;\n  dataFinal = tmp;\n}\n\nconst start = new Date(dataInicial + 'T12:00:00');\nconst end = new Date(dataFinal + 'T12:00:00');\nlet dias = Math.floor((end - start) / 86400000) + 1;\nlet limiteAplicado = false;\nif (dias > MAX) {\n  const limited = new Date(end);\n  limited.setDate(limited.getDate() - (MAX - 1));\n  dataInicial = limited.toISOString().slice(0, 10);\n  dias = MAX;\n  limiteAplicado = true;\n}\n\nreturn [{ json: {\n  dataInicial,\n  dataFinal,\n  dataHoje: hoje,\n  janelaColeta: dataInicial === dataFinal ? 'dia' : 'intervalo',\n  diasIntervalo: dias,\n  limiteAplicado,\n  maxDias: MAX\n} }];"
+      },
+      "id": "definir-periodo",
+      "name": "Definir Periodo",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.dapic.com.br/autenticacao/v1/login",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "Empresa",
+              "value": "={{ $vars.DAPIC_EMPRESA }}"
+            },
+            {
+              "name": "TokenIntegracao",
+              "value": "={{ $vars.DAPIC_TOKEN_INTEGRACAO }}"
+            }
+          ]
+        },
+        "options": {
+          "retry": {
+            "enabled": true,
+            "maxRetries": 3,
+            "retryInterval": 1000
+          }
+        }
+      },
+      "id": "auth-dapic",
+      "name": "🔐 Autenticar Dapic",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        720,
+        400
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
+    },
+    {
+      "parameters": {
+        "jsCode": "const auth = $('🔐 Autenticar Dapic').first().json;\nconst periodo = $('Definir Periodo').first().json;\n\nconst token = auth.access_token || auth.token || (auth.data && auth.data.access_token) || '';\nif (!token) {\n  throw new Error('Falha na autenticacao Dapic: access_token nao retornado');\n}\n\nreturn [{\n  json: {\n    token,\n    dataHoje: periodo.dataHoje,\n    dataInicial: periodo.dataInicial,\n    dataFinal: periodo.dataFinal,\n    janelaColeta: periodo.janelaColeta || 'intervalo',\n    diasIntervalo: periodo.diasIntervalo || 1,\n    limiteAplicado: periodo.limiteAplicado || false,\n    maxDias: periodo.maxDias || 90,\n    baseUrl: 'https://api.dapic.com.br',\n    iniciadoEm: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "preparar-contexto",
+      "name": "Preparar Contexto",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const ctx = $('Preparar Contexto').first().json;\nconst { dataInicial, dataFinal, baseUrl } = ctx;\nlet currentToken = ctx.token;\n\nconst sleep = (ms) => new Promise(r => setTimeout(r, ms));\n\nasync function refreshToken() {\n  const auth = await this.helpers.httpRequest({\n    method: 'POST',\n    url: baseUrl + '/autenticacao/v1/login',\n    headers: { 'Content-Type': 'application/json' },\n    body: { Empresa: $vars.DAPIC_EMPRESA, TokenIntegracao: $vars.DAPIC_TOKEN_INTEGRACAO },\n    json: true\n  });\n  if (!auth.access_token) throw new Error('Falha ao renovar token');\n  currentToken = auth.access_token;\n}\n\nasync function request(endpoint, params = {}, retry401 = true) {\n  const delays = [1000, 2000, 4000];\n  for (let i = 0; i <= delays.length; i++) {\n    try {\n      return await this.helpers.httpRequest({\n        method: 'GET',\n        url: baseUrl + endpoint,\n        headers: { Authorization: 'Bearer ' + currentToken },\n        qs: params,\n        json: true\n      });\n    } catch (err) {\n      const status = err.httpCode || err.statusCode || err.response?.statusCode;\n      if (status === 401 && retry401) {\n        await refreshToken.call(this);\n        return request.call(this, endpoint, params, false);\n      }\n      if ((status === 429 || status >= 500) && i < delays.length) {\n        await sleep(delays[i]);\n        continue;\n      }\n      throw err;\n    }\n  }\n}\n\nasync function fetchAll(endpoint, params = {}) {\n  const all = [];\n  let pagina = 1;\n  let totalPaginas = 1;\n  do {\n    const resp = await request.call(this, endpoint, { ...params, Pagina: pagina, RegistrosPorPagina: 200 });\n    if (Array.isArray(resp?.Dados)) all.push(...resp.Dados);\n    totalPaginas = Number(resp?.TotalPaginas || 1);\n    if (pagina < totalPaginas) await sleep(250);\n    pagina++;\n  } while (pagina <= totalPaginas);\n  return all;\n}\n\nfunction addDays(iso, days) {\n  const d = new Date(iso + 'T12:00:00');\n  d.setDate(d.getDate() + days);\n  return d.toISOString().slice(0, 10);\n}\n\nconst produtosVendidos = [];\nlet cursor = dataInicial;\nwhile (cursor <= dataFinal) {\n  let chunkEnd = addDays(cursor, 6);\n  if (chunkEnd > dataFinal) chunkEnd = dataFinal;\n  const parte = await fetchAll.call(this, '/v1/vendaspdv/produtos', {\n    DataInicial: cursor,\n    DataFinal: chunkEnd,\n    FiltrarPor: 0,\n    Status: 1\n  });\n  produtosVendidos.push(...parte);\n  cursor = addDays(chunkEnd, 1);\n  if (cursor <= dataFinal) await sleep(400);\n}\n\nreturn [{ json: {\n  produtosVendidos,\n  totalLinhas: produtosVendidos.length,\n  dataInicial,\n  dataFinal,\n  coletadoEm: new Date().toISOString()\n} }];"
+      },
+      "id": "coletar-vendas",
+      "name": "Coletar Vendas PDV",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const { produtosVendidos, dataInicial, dataFinal } = $('Coletar Vendas PDV').first().json;\nconst ctx = $('Preparar Contexto').first().json;\n\nconst pick = (obj, ...keys) => {\n  for (const k of keys) {\n    if (obj && obj[k] != null && obj[k] !== '') return obj[k];\n  }\n  return null;\n};\n\nconst toNum = (v) => Number(v || 0) || 0;\nconst round = (v) => Math.round((Number(v) || 0) * 100) / 100;\n\nconst mapaProdutos = new Map();\nconst mapaDia = new Map();\nconst mapaClientes = new Map();\nlet receitaTotal = 0;\nlet itensTotais = 0;\nconst vendasIds = new Set();\n\nconst isoDia = (raw) => {\n  if (!raw) return dataInicial;\n  const s = String(raw);\n  if (/^\\d{4}-\\d{2}-\\d{2}/.test(s)) return s.slice(0, 10);\n  const d = new Date(s);\n  return Number.isNaN(d.getTime()) ? dataInicial : d.toISOString().slice(0, 10);\n};\n\nfor (const linha of produtosVendidos) {\n  const codigo = String(pick(linha, 'Referencia', 'CodigoProduto', 'Codigo', 'Sku', 'SKU', 'IdProduto') ?? '').trim() || 'SEM-CODIGO';\n  const nome = String(pick(linha, 'Produto', 'Descricao', 'NomeProduto', 'Nome') ?? 'Produto sem descricao').trim();\n  const quantidade = toNum(pick(linha, 'Quantidade', 'Qtd', 'QuantidadeVendida'));\n  const valorTotal = toNum(pick(linha, 'ValorLiquido', 'ValorTotal', 'ValorBruto', 'Valor'));\n  const valorUnitario = toNum(pick(linha, 'ValorUnitario', 'PrecoUnitario', 'Preco'));\n  const idVenda = pick(linha, 'IdVenda', 'Id', 'IdPdv');\n  const dia = isoDia(pick(linha, 'DataVenda', 'Data', 'DataEmissao', 'DataMovimento'));\n  const cliente = String(pick(linha, 'Pessoa', 'NomePessoa', 'NomeCliente', 'Cliente') ?? '').trim() || 'Consumidor (sem cadastro)';\n\n  if (idVenda) vendasIds.add(String(idVenda));\n  receitaTotal += valorTotal;\n  itensTotais += quantidade;\n\n  const cAtual = mapaClientes.get(cliente) || { cliente, valor_total: 0, itens: 0, vendas: new Set() };\n  cAtual.valor_total += valorTotal;\n  cAtual.itens += quantidade;\n  if (idVenda) cAtual.vendas.add(String(idVenda));\n  mapaClientes.set(cliente, cAtual);\n\n  const chave = codigo + '|' + nome;\n  const atual = mapaProdutos.get(chave) || {\n    codigo, produto: nome, quantidade: 0, valor_total: 0, valor_unitario_medio: 0, ocorrencias: 0\n  };\n  atual.quantidade += quantidade;\n  atual.valor_total += valorTotal;\n  atual.ocorrencias += 1;\n  if (valorUnitario > 0) {\n    atual.valor_unitario_medio = atual.valor_unitario_medio === 0\n      ? valorUnitario\n      : (atual.valor_unitario_medio + valorUnitario) / 2;\n  }\n  mapaProdutos.set(chave, atual);\n\n  const diaAgg = mapaDia.get(dia) || { data: dia, receita: 0, volume: new Set() };\n  diaAgg.receita += valorTotal;\n  if (idVenda) diaAgg.volume.add(String(idVenda));\n  mapaDia.set(dia, diaAgg);\n}\n\nconst produtos = Array.from(mapaProdutos.values())\n  .map(p => ({\n    codigo: p.codigo,\n    produto: p.produto,\n    quantidade: round(p.quantidade),\n    valor_unitario_medio: round(p.valor_unitario_medio || (p.quantidade > 0 ? p.valor_total / p.quantidade : 0)),\n    valor_total: round(p.valor_total)\n  }))\n  .sort((a, b) => b.valor_total - a.valor_total);\n\nconst volumeVendas = vendasIds.size || produtosVendidos.length;\nconst ticketMedio = volumeVendas > 0 ? receitaTotal / volumeVendas : 0;\n\nconst evolucao_diaria = Array.from(mapaDia.values())\n  .sort((a, b) => a.data.localeCompare(b.data))\n  .map(d => ({\n    data: d.data,\n    receita: round(d.receita),\n    volume: d.volume.size || 0\n  }));\n\nconst relatorio = {\n  gerado_em: new Date().toISOString(),\n  janela: ctx.janelaColeta || 'intervalo',\n  data: dataFinal,\n  periodo: { inicio: dataInicial, fim: dataFinal, dias: ctx.diasIntervalo || evolucao_diaria.length || 1 },\n  summary: {\n    receita_total: round(receitaTotal),\n    volume_vendas: volumeVendas,\n    ticket_medio: round(ticketMedio),\n    total_itens: round(itensTotais),\n    total_skus: produtos.length,\n    receita_pdv: round(receitaTotal),\n    receita_b2b: 0\n  },\n  produtos_vendidos: produtos,\n  top_produtos: produtos.slice(0, 10),\n  evolucao_diaria,\n  top_clientes: Array.from(mapaClientes.values())\n    .map(c => ({ cliente: c.cliente, valor_total: round(c.valor_total), itens: round(c.itens), vendas: c.vendas.size }))\n    .sort((a, b) => b.valor_total - a.valor_total)\n    .slice(0, 10),\n  por_representante: []\n};\n\nreturn [{ json: { modulo: 'vendas', dados: relatorio } }];"
+      },
+      "id": "transformar-vendas",
+      "name": "Transformar Vendas",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1440,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const ctx = $('Preparar Contexto').first().json;\nconst { baseUrl } = ctx;\nlet currentToken = ctx.token;\n\nconst sleep = (ms) => new Promise(r => setTimeout(r, ms));\n\nasync function refreshToken() {\n  const auth = await this.helpers.httpRequest({\n    method: 'POST',\n    url: baseUrl + '/autenticacao/v1/login',\n    headers: { 'Content-Type': 'application/json' },\n    body: { Empresa: $vars.DAPIC_EMPRESA, TokenIntegracao: $vars.DAPIC_TOKEN_INTEGRACAO },\n    json: true\n  });\n  if (!auth.access_token) throw new Error('Falha ao renovar token');\n  currentToken = auth.access_token;\n}\n\nasync function request(endpoint, params = {}, retry401 = true) {\n  const delays = [1000, 2000, 4000];\n  for (let i = 0; i <= delays.length; i++) {\n    try {\n      return await this.helpers.httpRequest({\n        method: 'GET',\n        url: baseUrl + endpoint,\n        headers: { Authorization: 'Bearer ' + currentToken },\n        qs: params,\n        json: true\n      });\n    } catch (err) {\n      const status = err.httpCode || err.statusCode || err.response?.statusCode;\n      if (status === 401 && retry401) {\n        await refreshToken.call(this);\n        return request.call(this, endpoint, params, false);\n      }\n      if ((status === 429 || status >= 500) && i < delays.length) {\n        await sleep(delays[i]);\n        continue;\n      }\n      throw err;\n    }\n  }\n}\n\nasync function fetchAll(endpoint, params = {}, maxPaginas = Infinity) {\n  const all = [];\n  let pagina = 1;\n  let totalPaginas = 1;\n  do {\n    const resp = await request.call(this, endpoint, { ...params, Pagina: pagina, RegistrosPorPagina: 200 });\n    if (Array.isArray(resp?.Dados)) all.push(...resp.Dados);\n    totalPaginas = Math.min(Number(resp?.TotalPaginas || 1), maxPaginas);\n    if (pagina < totalPaginas) await sleep(250);\n    pagina++;\n  } while (pagina <= totalPaginas);\n  return all;\n}\n\n// Nesta instancia da Dapic apenas /v1/armazenadores/produtos responde.\nconst MAX_PAGINAS_ESTOQUE = 60; // ~12k linhas: teto de seguranca contra runaway\nlet estoqueAtual = [];\ntry {\n  estoqueAtual = await fetchAll.call(this, '/v1/armazenadores/produtos', { SaldoZerado: true }, MAX_PAGINAS_ESTOQUE);\n} catch (err) {\n  console.log('Estoque indisponivel em /v1/armazenadores/produtos: ' + (err.message || err));\n}\n\nreturn [{ json: { estoqueAtual, coletadoEm: new Date().toISOString() } }];"
+      },
+      "id": "coletar-estoque",
+      "name": "Coletar Estoque",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1680,
+        400
+      ],
+      "continueOnFail": true,
+      "notes": "Snapshot atual"
+    },
+    {
+      "parameters": {
+        "jsCode": "const { estoqueAtual } = $('Coletar Estoque').first().json;\n\nconst toNum = (v) => Number(v || 0) || 0;\nconst round = (v) => Math.round((Number(v) || 0) * 100) / 100;\n\nconst extrairCodigo = (produto) => {\n  const partes = String(produto || '').split(' - ');\n  return partes.length > 1 ? partes[0].trim() : '';\n};\nconst limparNome = (produto) => {\n  const partes = String(produto || '').split(' - ');\n  return partes.length > 1 ? partes.slice(1).join(' - ').trim() : String(produto || '').trim();\n};\nconst limparCor = (cor) => {\n  if (!cor) return null;\n  const partes = String(cor).split(' - ');\n  return partes.length > 1 ? partes.slice(1).join(' - ').trim() : String(cor).trim();\n};\n\n// Mapa de vendas do periodo por variacao (IdProduto|Cor|Tamanho)\nconst vendidoPorVariacao = new Map();\ntry {\n  const raw = $('Coletar Vendas PDV').first().json.produtosVendidos || [];\n  for (const v of raw) {\n    const chave = [v.IdProduto, v.Cor, v.Tamanho].join('|');\n    vendidoPorVariacao.set(chave, (vendidoPorVariacao.get(chave) || 0) + toNum(v.Quantidade));\n  }\n} catch (e) {\n  // sem dados de vendas no fluxo: segue sem cruzar\n}\n\nconst mapa = new Map();\nfor (const item of (estoqueAtual || [])) {\n  const chave = [item.IdProduto, item.Cor, item.Tamanho].join('|');\n  const valorUnit = toNum(item.ValorCusto ?? item.ValorUnitario ?? item.Valor ?? item.Preco);\n  const atual = mapa.get(chave);\n  if (atual) {\n    atual.estoque_atual += toNum(item.Quantidade ?? item.QuantidadeReal ?? item.Saldo);\n    if (!atual.valor_unitario && valorUnit) atual.valor_unitario = valorUnit;\n  } else {\n    mapa.set(chave, {\n      codigo: extrairCodigo(item.Produto),\n      produto: limparNome(item.Produto) || 'Produto',\n      cor: limparCor(item.Cor),\n      tamanho: item.Tamanho != null ? String(item.Tamanho).trim() : null,\n      estoque_atual: toNum(item.Quantidade ?? item.QuantidadeReal ?? item.Saldo),\n      vendido_hoje: vendidoPorVariacao.get(chave) || 0,\n      valor_unitario: valorUnit\n    });\n  }\n}\n\nconst linhas = Array.from(mapa.values()).sort((a, b) => b.vendido_hoje - a.vendido_hoje || a.estoque_atual - b.estoque_atual);\n\nconst valor_total_estoque = linhas.reduce((acc, l) => acc + l.estoque_atual * l.valor_unitario, 0);\nconst skus_criticos = linhas.filter(l => l.estoque_atual <= 2).length;\nconst skus_alerta = linhas.filter(l => l.estoque_atual <= 5 && l.estoque_atual > 2).length;\nconst total_vendido_hoje = linhas.reduce((acc, l) => acc + l.vendido_hoje, 0);\n\nconst dados = {\n  gerado_em: new Date().toISOString(),\n  summary: {\n    total_skus: linhas.length,\n    skus_criticos,\n    skus_alerta,\n    total_vendido_hoje: round(total_vendido_hoje),\n    valor_total_estoque: round(valor_total_estoque)\n  },\n  linhas,\n  saldo_dia: linhas\n};\n\nreturn [{ json: { modulo: 'estoque', dados } }];"
+      },
+      "id": "transformar-estoque",
+      "name": "Transformar Estoque",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1920,
+        400
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const ctx = $('Preparar Contexto').first().json;\nlet vendas = {};\ntry { vendas = $('Transformar Vendas').first().json.dados || {}; } catch (e) {}\nlet estoque = {};\ntry { estoque = $('Transformar Estoque').first().json.dados || {}; } catch (e) {}\n\nconst linhasEst = estoque.linhas || [];\nconst produtos = vendas.produtos_vendidos || [];\nconst dias = Math.max(1, Number(ctx.diasIntervalo || 1));\n\nconst round = (v) => Math.round((Number(v) || 0) * 100) / 100;\nconst round1 = (v) => Math.round((Number(v) || 0) * 10) / 10;\n\n// REPOSICAO URGENTE: cobertura = estoque / (vendido / diasIntervalo)\n// Considera somente linhas com vendido > 0 (so faz sentido reposicao do\n// que esta girando). Ordena por cobertura crescente (menor primeiro).\nconst reposicaoCandidatos = linhasEst\n  .filter(l => Number(l.vendido_hoje || 0) > 0)\n  .map(l => {\n    const vendido = Number(l.vendido_hoje || 0);\n    const estoque_atual = Number(l.estoque_atual || 0);\n    const velocidade = vendido / dias;\n    const cobertura_dias = velocidade > 0 ? round1(estoque_atual / velocidade) : 0;\n    let urgencia = 'medio';\n    if (cobertura_dias < 2) urgencia = 'critico';\n    else if (cobertura_dias < 7) urgencia = 'alto';\n    return {\n      codigo: l.codigo || '',\n      produto: l.produto || '',\n      variacao: [l.cor, l.tamanho].filter(Boolean).join(' / ') || '—',\n      estoque_atual,\n      vendido_periodo: vendido,\n      cobertura_dias,\n      urgencia\n    };\n  })\n  .sort((a, b) => a.cobertura_dias - b.cobertura_dias)\n  .slice(0, 30);\n\n// CURVA ABC: classifica por receita acumulada no intervalo\n// A = primeiros que somam ate 80% da receita\n// B = proximos ate 95%\n// C = resto\nconst totalReceita = produtos.reduce((s, p) => s + Number(p.valor_total || 0), 0);\nlet acumulado = 0;\nconst detalhesAbc = [];\nlet posicao = 0;\nlet countA = 0, countB = 0, countC = 0;\nlet recA = 0, recB = 0, recC = 0;\nlet tckA = 0, tckB = 0, tckC = 0;\n\nfor (const p of produtos) {\n  posicao++;\n  const receita = Number(p.valor_total || 0);\n  const qtd = Number(p.quantidade || 0);\n  acumulado += receita;\n  const pctAcum = totalReceita > 0 ? (acumulado / totalReceita) * 100 : 0;\n  let classe = 'C';\n  if (pctAcum <= 80) classe = 'A';\n  else if (pctAcum <= 95) classe = 'B';\n\n  if (classe === 'A') { countA++; recA += receita; tckA += Number(p.valor_unitario_medio || 0); }\n  else if (classe === 'B') { countB++; recB += receita; tckB += Number(p.valor_unitario_medio || 0); }\n  else { countC++; recC += receita; tckC += Number(p.valor_unitario_medio || 0); }\n\n  if (detalhesAbc.length < 30) {\n    detalhesAbc.push({\n      posicao, classe,\n      codigo: p.codigo || '',\n      produto: p.produto || '',\n      variacao: '',\n      vendido: qtd,\n      receita: round(receita),\n      pct_receita: round1(totalReceita > 0 ? (receita / totalReceita) * 100 : 0)\n    });\n  }\n}\n\nconst totalSkus = produtos.length || 1;\n// cobertura media por classe usando linhas de estoque que tem vendido\nconst linhasComCob = reposicaoCandidatos;\nconst mediaCobertura = (arr) => {\n  if (!arr || arr.length === 0) return 0;\n  return round1(arr.reduce((s, x) => s + Number(x.cobertura_dias || 0), 0) / arr.length);\n};\n\nconst resumoAbc = [\n  {\n    classe: 'A', skus: countA,\n    percentual_skus: round1((countA / totalSkus) * 100),\n    percentual_receita: round1((recA / Math.max(1, totalReceita)) * 100),\n    ticket_medio: countA > 0 ? round(tckA / countA) : 0,\n    cobertura_media_dias: mediaCobertura(linhasComCob.slice(0, Math.max(1, Math.min(linhasComCob.length, countA)))),\n    descricao: 'Top de vendas — concentram a maior parte da receita. Acompanhamento diario, cobertura minima critica.'\n  },\n  {\n    classe: 'B', skus: countB,\n    percentual_skus: round1((countB / totalSkus) * 100),\n    percentual_receita: round1((recB / Math.max(1, totalReceita)) * 100),\n    ticket_medio: countB > 0 ? round(tckB / countB) : 0,\n    cobertura_media_dias: mediaCobertura(linhasComCob.slice(countA, countA + countB)),\n    descricao: 'Camada intermediaria — boa rotacao, cobertura confortavel. Monitorar semanalmente.'\n  },\n  {\n    classe: 'C', skus: countC,\n    percentual_skus: round1((countC / totalSkus) * 100),\n    percentual_receita: round1((recC / Math.max(1, totalReceita)) * 100),\n    ticket_medio: countC > 0 ? round(tckC / countC) : 0,\n    cobertura_media_dias: mediaCobertura(linhasComCob.slice(countA + countB)),\n    descricao: 'Longa cauda — baixa rotacao. Concentra capital parado, candidatos a liquidacao/descontinuacao.'\n  }\n];\n\nreturn [{ json: {\n  reposicao_urgente: reposicaoCandidatos,\n  curva_abc: { resumo: resumoAbc, detalhes: detalhesAbc },\n  diagnostico_numerico: {\n    total_skus_vendidos: totalSkus,\n    total_receita: round(totalReceita),\n    skus_classe_a: countA,\n    skus_classe_b: countB,\n    skus_classe_c: countC,\n    capital_parado_estimado: round((estoque.summary && estoque.summary.valor_total_estoque) || 0) - round(totalReceita),\n    rupturas_iminentes: reposicaoCandidatos.filter(r => r.urgencia === 'critico').length,\n    dias_intervalo: dias\n  }\n} }];"
+      },
+      "id": "calcular-abc",
+      "name": "Calcular ABC",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2160,
+        400
+      ],
+      "notes": "Curva ABC + reposicao urgente (deterministico)"
+    },
+    {
+      "parameters": {
+        "jsCode": "const ctx = $('Preparar Contexto').first().json;\nlet vendas = {}, estoque = {}, abc = {};\ntry { vendas = $('Transformar Vendas').first().json.dados || {}; } catch (e) {}\ntry { estoque = $('Transformar Estoque').first().json.dados || {}; } catch (e) {}\ntry { abc = $('Calcular ABC').first().json || {}; } catch (e) {}\n\nconst num = (v) => Number(v || 0) || 0;\nconst vs = vendas.summary || {};\nconst es = estoque.summary || {};\n\nconst payload = {\n  periodo: { inicio: ctx.dataInicial, fim: ctx.dataFinal, dias_intervalo: ctx.diasIntervalo || 1 },\n  vendas: {\n    receita: num(vs.receita_total),\n    volume: num(vs.volume_vendas),\n    ticket_medio: num(vs.ticket_medio),\n    total_skus_vendidos: num(vs.total_skus)\n  },\n  estoque: {\n    total_skus: num(es.total_skus),\n    skus_criticos: num(es.skus_criticos),\n    skus_alerta: num(es.skus_alerta),\n    capital_estoque: num(es.valor_total_estoque),\n    total_vendido_hoje: num(es.total_vendido_hoje)\n  },\n  curva_abc_resumo: (abc.curva_abc && abc.curva_abc.resumo) || [],\n  reposicao_urgente_top10: (abc.reposicao_urgente || []).slice(0, 10),\n  top_produtos: (vendas.produtos_vendidos || []).slice(0, 15)\n};\n\nconst system = [\n  'Voce e Paulo, doutor (PhD) em Planejamento e Controle de Producao (PCP) e Operacoes, consultor senior da Tech Malhas (malharia em Franca/SP). Atue como mentor: alem de diagnosticar, EXPLIQUE o raciocinio para que o gestor aprenda a ler os proprios numeros.',\n  'CONTEXTO TEMPORAL: sua analise e PONTUAL e refere-se ao intervalo selecionado (' + ctx.dataInicial + ' a ' + ctx.dataFinal + '). Vendas e giro seguem o intervalo. O estoque e SEMPRE posicao atual (snapshot) — a Dapic nao mantem historico. Sempre deixe claro no resumo que a leitura e do intervalo analisado.',\n  'Dominios que voce aplica: gestao de estoque (cobertura, giro, ruptura), curva ABC e principio de Pareto aplicado a SKU, mix descalibrado, capital empoçado em variacoes de baixa rotacao, politica de reposicao por classe.',\n  'NUNCA invente numeros — use APENAS os valores do JSON enviado. Sempre que citar um conceito tecnico (giro, cobertura, ABC, ruptura), explique-o em linguagem simples.',\n  'Responda APENAS com um objeto JSON valido (sem markdown, sem code fences, sem texto fora do JSON).',\n  'Tom: especialista que orienta — claro, didatico, objetivo, portugues BR, foco em decisao.',\n  '',\n  'Schema obrigatorio:',\n  '{',\n  '  \"resumo_executivo\": \"2 a 3 frases citando o intervalo (' + ctx.dataInicial + ' a ' + ctx.dataFinal + '), SKUs criticos, capital em estoque e o principal risco de ruptura.\",',\n  '  \"diagnostico\": \"1 paragrafo (4 a 6 frases) explicando O QUE os numeros revelam e POR QUE importa. Conecte causa e efeito como um orientador.\",',\n  '  \"metodologia\": \"2 a 4 frases dizendo quais metricas/frameworks usou (ABC, cobertura em dias, ruptura) e como o gestor deve interpreta-las.\",',\n  '  \"saude_estoque\": \"boa|atencao|critica\",',\n  '  \"blocos\": [ { \"prioridade\": 1, \"severidade\": \"critico|atencao|ok\", \"categoria\": \"rotulo curto (ex.: Ruptura iminente, Capital parado, Mix descalibrado)\", \"titulo\": \"frase curta de destaque\", \"valor\": \"numero/moeda principal (opcional)\", \"conteudo\": \"1 a 3 frases explicando o achado e a acao sugerida\" } ],',\n  '  \"indicadores\": [ { \"label\": \"string\", \"valor\": \"string com numero/moeda\", \"tom\": \"positivo|atencao|critico\" } ],',\n  '  \"alertas\": [ { \"prioridade\": \"alta|media|baixa\", \"tipo\": \"ruptura|capital_parado|mix|outro\", \"titulo\": \"string\", \"detalhe\": \"string\" } ],',\n  '  \"recomendacoes\": [ { \"prioridade\": \"alta|media|baixa\", \"acao\": \"repor|promover|descontinuar|monitorar\", \"produto\": \"nome ou diversos\", \"motivo\": \"string\", \"fundamentacao\": \"por que esta acao, ancorada em conceito de PCP (ex.: politica de cobertura minima por classe ABC)\", \"impacto_esperado\": \"string\" } ],',\n  '  \"glossario\": [ { \"termo\": \"string\", \"definicao\": \"explicacao curta e simples\" } ]',\n  '}',\n  '',\n  'REGRA DOS BLOCOS: \"blocos\" e a leitura priorizada da pagina. Devolva de 3 a 6 blocos ORDENADOS por prioridade (1 = mais importante NESTE INTERVALO). Use \"critico\" para risco que exige acao imediata, \"atencao\" para acompanhar, \"ok\" para saudavel.',\n  'Regras: 3 a 6 blocos, 4 a 6 indicadores, 2 a 5 alertas, 2 a 5 recomendacoes, 3 a 5 termos no glossario. Cite SKUs concretos do reposicao_urgente_top10 quando fizer sentido.'\n].join('\\n');\n\nconst prompt_agente = ['Dados de estoque/PCP do periodo:', JSON.stringify(payload), '', 'Gere o JSON conforme o schema do system message.'].join('\\n');\n\nreturn [{ json: { prompt_agente, system_message: system, payload_ia: payload } }];"
+      },
+      "id": "preparar-prompt-paulo",
+      "name": "Preparar Prompt Paulo",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2400,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "gpt-4o",
+          "mode": "list"
+        },
+        "options": {
+          "temperature": 0.2,
+          "responseFormat": "json_object"
+        }
+      },
+      "id": "openai-paulo",
+      "name": "OpenAI Paulo (gpt-4o)",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        2400,
+        600
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "cCFxJ8gcTdB3fTEk",
+          "name": "OpenAI account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.prompt_agente }}",
+        "options": {
+          "systemMessage": "={{ $json.system_message }}"
+        }
+      },
+      "id": "agente-paulo",
+      "name": "Paulo PCP",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [
+        2580,
+        400
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\nconst raw = item.output || item.text || item.response || '';\nlet ctx = {};\ntry { ctx = $('Preparar Prompt Paulo').first().json.payload_ia || {}; } catch (e) {}\n\nfunction tryParse(text) {\n  if (!text || typeof text !== 'string') return null;\n  let c = text.trim().replace(/^\\s*```json\\s*/i, '').replace(/\\s*```\\s*$/i, '').replace(/^\\s*```\\s*/, '');\n  try { return JSON.parse(c); } catch (e) {}\n  const m = c.match(/\\{[\\s\\S]*\\}/);\n  if (m) { try { return JSON.parse(m[0]); } catch (e) {} }\n  return null;\n}\n\nfunction normBlocos(arr) {\n  if (!Array.isArray(arr)) return [];\n  const sevOk = { critico: 1, atencao: 1, ok: 1 };\n  return arr\n    .map((b, i) => ({\n      prioridade: Number(b && b.prioridade) || (i + 1),\n      severidade: sevOk[String(b && b.severidade || '').toLowerCase()] ? String(b.severidade).toLowerCase() : 'atencao',\n      categoria: String(b && b.categoria || '').trim(),\n      titulo: String(b && b.titulo || '').trim(),\n      valor: b && b.valor != null ? String(b.valor) : '',\n      conteudo: String(b && b.conteudo || '').trim()\n    }))\n    .filter(b => b.titulo || b.conteudo)\n    .sort((a, b) => a.prioridade - b.prioridade)\n    .slice(0, 6);\n}\n\nconst p = tryParse(raw);\nconst base = { gerado_em: new Date().toISOString(), modelo: 'gpt-4o', agente: 'Paulo PCP', contexto: ctx };\nconst analise = (p && typeof p === 'object') ? {\n  ...base,\n  resumo_executivo: String(p.resumo_executivo || '').trim(),\n  diagnostico: String(p.diagnostico || '').trim(),\n  metodologia: String(p.metodologia || '').trim(),\n  saude_estoque: p.saude_estoque || 'atencao',\n  blocos: normBlocos(p.blocos),\n  indicadores: Array.isArray(p.indicadores) ? p.indicadores.slice(0, 6) : [],\n  alertas: Array.isArray(p.alertas) ? p.alertas.slice(0, 8) : [],\n  recomendacoes: Array.isArray(p.recomendacoes) ? p.recomendacoes.slice(0, 8) : [],\n  glossario: Array.isArray(p.glossario) ? p.glossario.slice(0, 6) : []\n} : {\n  ...base,\n  resumo_executivo: '',\n  diagnostico: '',\n  metodologia: '',\n  saude_estoque: 'indisponivel',\n  blocos: [], indicadores: [], alertas: [], recomendacoes: [], glossario: [],\n  erro: 'Falha ao interpretar resposta do agente',\n  raw: String(raw).slice(0, 400)\n};\n\nreturn [{ json: { analiseEstoque: analise } }];"
+      },
+      "id": "parse-paulo",
+      "name": "Parse Paulo",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2760,
+        400
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const staticData = $getWorkflowStaticData('global');\nconst ctx = $('Preparar Contexto').first().json;\n\nlet vendas = null, estoque = null, abc = null, analise = null;\ntry { vendas = $('Transformar Vendas').first().json.dados || null; } catch (e) {}\ntry { estoque = $('Transformar Estoque').first().json.dados || null; } catch (e) {}\ntry { abc = $('Calcular ABC').first().json || null; } catch (e) {}\ntry { analise = $('Parse Paulo').first().json.analiseEstoque || null; } catch (e) {}\n\nconst atualizadoEm = new Date().toISOString();\n\n// Anexa reposicao_urgente e curva_abc DETERMINISTICOS na analise (frontend\n// usa esses arrays para a tabela; o agente complementa com texto e blocos).\nconst analiseFinal = analise ? {\n  ...analise,\n  reposicao_urgente: (abc && abc.reposicao_urgente) || [],\n  curva_abc: (abc && abc.curva_abc) || { resumo: [], detalhes: [] },\n  periodo: { inicio: ctx.dataInicial, fim: ctx.dataFinal }\n} : null;\n\nstaticData.insightsEstoque = {\n  dataInicial: ctx.dataInicial,\n  dataFinal: ctx.dataFinal,\n  dataExecucao: ctx.dataHoje,\n  janelaColeta: ctx.janelaColeta,\n  limiteAplicado: ctx.limiteAplicado || false,\n  maxDias: ctx.maxDias || 90,\n  atualizadoEm,\n  vendas: vendas ? { summary: vendas.summary, total_produtos: (vendas.produtos_vendidos || []).length } : null,\n  estoque: estoque ? { summary: estoque.summary, total_linhas: (estoque.linhas || []).length } : null,\n  analiseEstoque: analiseFinal\n};\n\nreturn [{ json: {\n  sucesso: true,\n  dataInicial: ctx.dataInicial,\n  dataFinal: ctx.dataFinal,\n  limiteAplicado: ctx.limiteAplicado || false,\n  atualizadoEm,\n  resumo: analiseFinal?.resumo_executivo || null\n} }];"
+      },
+      "id": "salvar-insights",
+      "name": "Salvar Insights",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2940,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "dados-estoque-ia",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "api-webhook",
+      "name": "API GET /dados",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [
+        240,
+        720
+      ],
+      "webhookId": "insights-estoque-dados"
+    },
+    {
+      "parameters": {
+        "jsCode": "const staticData = $getWorkflowStaticData('global');\nconst snap = staticData.insightsEstoque || null;\n\nif (!snap) {\n  return [{ json: { success: false, error: 'Nenhuma analise de estoque coletada ainda. Selecione o intervalo e clique em Atualizar.' } }];\n}\n\nreturn [{ json: {\n  success: true,\n  dataInicial: snap.dataInicial,\n  dataFinal: snap.dataFinal,\n  dataExecucao: snap.dataExecucao,\n  janelaColeta: snap.janelaColeta,\n  limiteAplicado: snap.limiteAplicado || false,\n  maxDias: snap.maxDias || 90,\n  atualizadoEm: snap.atualizadoEm,\n  gerado_em: snap.analiseEstoque?.gerado_em || snap.atualizadoEm,\n  analise: snap.analiseEstoque || null,\n  vendas: snap.vendas || null,\n  estoque: snap.estoque || null\n} }];"
+      },
+      "id": "api-read-static",
+      "name": "Ler Insights",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        720
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Access-Control-Allow-Origin",
+                "value": "*"
+              },
+              {
+                "name": "Access-Control-Allow-Methods",
+                "value": "GET, OPTIONS"
+              },
+              {
+                "name": "Access-Control-Allow-Headers",
+                "value": "Content-Type, Authorization"
+              },
+              {
+                "name": "Cache-Control",
+                "value": "no-cache"
+              }
+            ]
+          }
+        }
+      },
+      "id": "api-respond",
+      "name": "Responder API",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        720,
+        720
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Insights IA Estoque (Paulo PCP)\\n\\nWorkflow independente da pagina.\\n\\n### Coleta\\nPOST `/webhook/coletar-estoque-ia`\\n```json\\n{ \"dataInicial\": \"2026-04-01\", \"dataFinal\": \"2026-04-30\" }\\n```\\n\\n### Leitura\\nGET `/webhook/dados-estoque-ia`\\n\\nLe `staticData.insightsEstoque`. Teto de 90 dias (3 meses).",
+        "height": 280,
+        "width": 420,
+        "color": 4
+      },
+      "id": "nota-config",
+      "name": "Instrucoes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        240,
+        80
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook Coletar": {
+      "main": [
+        [
+          {
+            "node": "Definir Periodo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Definir Periodo": {
+      "main": [
+        [
+          {
+            "node": "🔐 Autenticar Dapic",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔐 Autenticar Dapic": {
+      "main": [
+        [
+          {
+            "node": "Preparar Contexto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar Contexto": {
+      "main": [
+        [
+          {
+            "node": "Coletar Vendas PDV",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Coletar Vendas PDV": {
+      "main": [
+        [
+          {
+            "node": "Transformar Vendas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transformar Vendas": {
+      "main": [
+        [
+          {
+            "node": "Coletar Estoque",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Coletar Estoque": {
+      "main": [
+        [
+          {
+            "node": "Transformar Estoque",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transformar Estoque": {
+      "main": [
+        [
+          {
+            "node": "Calcular ABC",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calcular ABC": {
+      "main": [
+        [
+          {
+            "node": "Preparar Prompt Paulo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar Prompt Paulo": {
+      "main": [
+        [
+          {
+            "node": "Paulo PCP",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Paulo (gpt-4o)": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Paulo PCP",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Paulo PCP": {
+      "main": [
+        [
+          {
+            "node": "Parse Paulo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Paulo": {
+      "main": [
+        [
+          {
+            "node": "Salvar Insights",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "API GET /dados": {
+      "main": [
+        [
+          {
+            "node": "Ler Insights",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ler Insights": {
+      "main": [
+        [
+          {
+            "node": "Responder API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "timezone": "America/Sao_Paulo",
+    "executionTimeout": 480
+  },
+  "pinData": {},
+  "meta": {
+    "version": "1.0.0",
+    "scope": "insights-estoque",
+    "builtAt": "2026-05-30T01:40:01.348Z"
+  },
+  "tags": [
+    {
+      "name": "erp"
+    },
+    {
+      "name": "dapic"
+    },
+    {
+      "name": "tech-malhas"
+    },
+    {
+      "name": "insights-ia"
+    }
+  ]
+}

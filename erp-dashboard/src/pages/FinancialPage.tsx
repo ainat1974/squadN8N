@@ -3,6 +3,7 @@ import { Bar } from 'react-chartjs-2'
 import { Chart as ChartJS, CategoryScale, LinearScale, BarElement, Tooltip, Legend } from 'chart.js'
 import { useErpData } from '../hooks/useErpData'
 import { useTriggerColeta } from '../hooks/useTriggerColeta'
+import { useApplyRangeFromUrl } from '../hooks/useApplyRangeFromUrl'
 import { api, formatBRL, formatDate } from '../services/api'
 import { usePeriod } from '../context/PeriodContext'
 import { buildApiOptions } from '../utils/period'
@@ -15,7 +16,7 @@ ChartJS.register(CategoryScale, LinearScale, BarElement, Tooltip, Legend)
 // PREVIEW: mock realista da página Financeiro até o workflow N8N
 // dedicado de Financeiro entrar. Desligar a flag quando ativar.
 // =====================================================================
-const PREVIEW_FINANCEIRO = true
+const PREVIEW_FINANCEIRO = false
 
 function gerarFinanceiroMock() {
   let seed = 23
@@ -191,6 +192,7 @@ function calcAging(items: any[]) {
 }
 
 export default function FinancialPage() {
+  useApplyRangeFromUrl()
   const { range } = usePeriod()
   const trigger = useTriggerColeta()
   const fetchOptions = buildApiOptions(range)

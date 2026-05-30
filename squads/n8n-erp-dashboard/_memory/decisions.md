@@ -162,14 +162,76 @@
 
 ---
 
-## Lote final de execução (quando todas as deliberações fecharem)
+## Lote final de execução — STATUS
 
-1. Implementar **CK-OV-2** (Diego real no workflow Visão Geral).
-2. Implementar **CK-OV-1** + leitura da query em todas as páginas migradas.
-3. Implementar **CK-VD-1** (coletar estoque dos Top 20) na migração de Vendas.
-4. Construir workflows N8N dedicados:
-   `Insights IA Estoque (Paulo)`, `Vendas`, `Estoque`, `Financeiro`.
-5. Desligar flags `PREVIEW_DIEGO` e `PREVIEW_PAULO`.
-6. Apagar arquivos órfãos (`InsightsPage.tsx`).
-7. Build + deploy Vercel + commit consolidado.
-8. Atualizar este arquivo movendo CHECKPOINTS para "Decidido e implementado".
+### Implementado (2026-05-29)
+
+1. **CK-OV-2 — Diego (Diretor Executivo) no workflow Visão Geral** ✅
+   - Nós `Preparar Prompt Diego` → `OpenAI Diego (gpt-4o)` →
+     `Diego Executivo` → `Parse Diego` adicionados depois de
+     `Montar Resumo`, ambos com `continueOnFail` (a determinística
+     vira fallback se o agente falhar).
+   - `Salvar Overview` anexa `staticData.overview.analise` com o
+     payload do Diego (resumo, diagnóstico, blocos cross-domain,
+     recomendações, próximos passos).
+   - Frontend (`OverviewPage`): `PREVIEW_DIEGO=false`, lê
+     `d.analise` real; mock mantido como referência (regredível).
+
+2. **CK-OV-1 — Intervalo via URL nos "Ver detalhe"** ✅
+   - Helper `withRange(path, di, df)` em `OverviewPage` anexa
+     `?dataInicial=...&dataFinal=...` em todos os links de detalhe
+     (blocos do Diego, blocos determinísticos e saúde por área).
+   - Hook `useApplyRangeFromUrl()` lê a query nas páginas legadas
+     (Vendas, Estoque, Financeiro), aplica no `PeriodContext`
+     e limpa a URL para não reaplicar em refresh.
+
+3. **CK-VD-1 — Estoque dos Top 20 em Vendas (v3-range)** ✅
+   - `TRANSFORMAR_VENDAS` agora gera `top_produtos: produtos.slice(0,20)`.
+   - `SALVAR_RELATORIO` cruza `top_produtos` com `estoque.linhas`
+     gerando `vendas.estoque_top10` (lista de produtos) e
+     `vendas.estoque_top10_linhas` (todas as variações por cor/tam).
+   - Frontend (`SalesPage`): `PREVIEW_ESTOQUE_TOP20=false`.
+
+4. **Insights IA Estoque (Paulo PCP)** ✅
+   - Workflow dedicado `Tech Malhas - Insights IA Estoque`,
+     gerado por `scripts/build-workflow-insights-estoque.js`.
+   - Pipeline: Webhook → Definir Período → Autenticar → Preparar
+     Contexto → Coletar Vendas → Transformar Vendas → Coletar
+     Estoque → Transformar Estoque → **Calcular ABC**
+     (determinístico: reposição urgente + curva A/B/C) → Preparar
+     Prompt Paulo → OpenAI Paulo (gpt-4o) → Agente → Parse → Salvar.
+   - Webhooks: `POST /webhook/coletar-estoque-ia` (disparo) e
+     `GET /webhook/dados-estoque-ia` (leitura). 90 dias máx.
+   - Frontend: hook `useInsightsEstoque`, página atualizada,
+     `PREVIEW_PAULO=false`.
+
+5. **Flags PREVIEW restantes desligadas** ✅
+   - `PREVIEW_FINANCEIRO=false` (`FinancialPage`).
+   - `PREVIEW_ESTOQUE=false` (`StockPage`).
+   - `PREVIEW_TOP_CLIENTES=false` (`OverviewPage`).
+   - As páginas continuam funcionais quando a fonte real não trouxer
+     o dado: usam EmptyState ou ocultam o quadrante.
+
+6. **Cleanup** ✅
+   - `InsightsPage.tsx` deletada em ciclo anterior.
+   - Scripts `probe-*.js` movidos para `scripts/_archive/`.
+
+### Validação end-to-end
+
+- Build de produção (`npm run build`): ✓ 108 módulos, 667 kB.
+- Lint (`npm run lint --max-warnings 0`): ✓ sem erros nem warnings.
+- Smoke test dos webhooks (intervalo 26/05 a 29/05):
+  - `dados-estoque-ia`: 4 blocos Paulo, 30 itens em reposição urgente.
+  - `dados-overview`: 5 KPIs + Diego com 3 blocos cross-domain.
+  - `erp?modulo=vendas`: 20 top_produtos + 715 linhas de estoque
+    cruzadas (estoque_top10_linhas).
+
+### Próximos passos (futuro, fora deste lote)
+
+- Migrar `Vendas`, `Estoque`, `Financeiro` para o **modelo
+  independente** (workflow próprio + hook `useIndependentColeta`).
+  Hoje ainda usam o `v3-range` compartilhado via `/webhook/erp`.
+  A funcionalidade está correta, só falta isolar para reduzir
+  latência e permitir snapshots diferentes por página.
+- Decidir se a página Vendas terá agente IA dedicado (ex.: "Comercial")
+  ou se segue determinística.

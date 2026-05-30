@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useErpData } from '../hooks/useErpData'
 import { useTriggerColeta } from '../hooks/useTriggerColeta'
+import { useApplyRangeFromUrl } from '../hooks/useApplyRangeFromUrl'
 import { api, formatBRL, formatNum } from '../services/api'
 import { usePeriod } from '../context/PeriodContext'
 import { buildApiOptions } from '../utils/period'
@@ -12,7 +13,7 @@ import { EmptyState, LoadingBlock, MetricCard, PageHeader, Panel, StatusPill } f
 // (workflow legado) ainda não popula os endpoints com dados ricos.
 // Quando o workflow N8N dedicado de Estoque entrar, basta desligar a flag.
 // =====================================================================
-const PREVIEW_ESTOQUE = true
+const PREVIEW_ESTOQUE = false
 
 const CORES_BASE = ['PRETO', 'BRANCO', 'CINZA', 'AZUL MARINHO', 'OFF', 'MOSTARDA', 'ROSA']
 const TAMANHOS_BASE = ['PP', 'P', 'M', 'G', 'GG', 'XGG']
@@ -188,6 +189,7 @@ const ESTOQUE_MOCK = gerarEstoqueMock()
 // =====================================================================
 
 export default function StockPage() {
+  useApplyRangeFromUrl()
   const { range } = usePeriod()
   const fetchOptions = buildApiOptions(range)
   const rangeKey = `${range.dataInicial}|${range.dataFinal}`

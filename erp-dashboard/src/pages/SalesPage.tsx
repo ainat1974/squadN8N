@@ -6,6 +6,7 @@ import {
 } from 'chart.js'
 import { useErpData } from '../hooks/useErpData'
 import { useTriggerColeta } from '../hooks/useTriggerColeta'
+import { useApplyRangeFromUrl } from '../hooks/useApplyRangeFromUrl'
 import { api, formatBRL, formatDate, formatNum } from '../services/api'
 import { usePeriod } from '../context/PeriodContext'
 import { buildApiOptions, formatRangeLabel } from '../utils/period'
@@ -71,7 +72,7 @@ function fmtDiaCurto(iso: string): string {
 // os produtos que aparecem no Top 20 vendidos. Quando o workflow novo
 // (CK-VD-1) coletar estoque por SKU, basta desligar essa flag.
 // =====================================================================
-const PREVIEW_ESTOQUE_TOP20 = true
+const PREVIEW_ESTOQUE_TOP20 = false
 const TAMANHOS = ['PP', 'P', 'M', 'G', 'GG', 'XGG']
 const ESTOQUE_TOP20_MOCK_PRODUTOS = [
   { codigo: '02038412', produto: 'BABY LOOK COTTON PREMIUM', cores: ['PRETO', 'BRANCO', 'OFF', 'AZUL MARINHO'], range: [1, 22] },
@@ -130,6 +131,7 @@ const ESTOQUE_TOP20_PRODUTOS_MOCK = ESTOQUE_TOP20_MOCK_PRODUTOS.map(p => ({
 // =====================================================================
 
 export default function SalesPage() {
+  useApplyRangeFromUrl()
   const { range } = usePeriod()
   const trigger = useTriggerColeta()
   const [estoqueFilters, setEstoqueFilters] = useState({
@@ -445,7 +447,7 @@ export default function SalesPage() {
                   )}
                 </tbody>
               </table>
-            ) : <EmptyState title="Estoque dos Top 20 ainda não coletado" detail="A coleta por SKU dos top vendidos será ativada na migração da página Vendas para o workflow independente (checkpoint VD-1)." />}
+            ) : <EmptyState title="Estoque dos Top 20 ainda não disponível" detail="Clique em Atualizar para executar uma nova coleta — o workflow já cruza top vendidos com estoque atual." />}
           </div>
         </Panel>
       </div>

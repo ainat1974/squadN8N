@@ -1,23 +1,80 @@
 import { NavLink } from 'react-router-dom'
-import { useState } from 'react'
 import DateRangePicker from '../components/DateRangePicker'
-import { EmptyState, PageHeader, Panel, StatusPill } from '../components/DashboardPrimitives'
+import { EmptyState, LoadingBlock, PageHeader, Panel, StatusPill } from '../components/DashboardPrimitives'
 import { formatBRL, formatNum } from '../services/api'
-import {
-  clampRange,
-  daysInRange,
-  todayInSaoPaulo,
-  MAX_RANGE_DAYS,
-  type DateRange,
-} from '../utils/dateRange'
-import { formatRangeLabel } from '../utils/period'
+import { useInsightsEstoque } from '../hooks/useInsightsEstoque'
 
 // =====================================================================
-// PREVIEW: como a página IA Estoque ficaria com o agente Paulo PCP.
-// Dados MOCKADOS, baseados na estrutura real validada no workflow v3.
-// Workflow N8N dedicado ainda não foi criado — aguardando aprovação.
+// PAULO PCP (Insights IA Estoque) — agente real, workflow dedicado.
+// Use PREVIEW_PAULO=true apenas para regredir a UI ao mock visual.
 // =====================================================================
-const PREVIEW_PAULO = true
+const PREVIEW_PAULO = false
+
+type AbcResumo = {
+  classe: string
+  skus: number
+  percentual_skus: number
+  percentual_receita: number
+  ticket_medio: number
+  cobertura_media_dias: number
+  descricao: string
+}
+type AbcDetalhe = {
+  posicao: number
+  classe: string
+  codigo: string
+  produto: string
+  variacao: string
+  vendido: number
+  receita: number
+  pct_receita: number
+}
+type ReposicaoItem = {
+  codigo: string
+  produto: string
+  variacao: string
+  estoque_atual: number
+  vendido_periodo: number
+  cobertura_dias: number
+  urgencia: string
+}
+type IndicadorEst = { label?: string; valor?: string; tom?: string }
+type BlocoEst = {
+  prioridade?: number
+  severidade?: string
+  categoria?: string
+  titulo?: string
+  valor?: string
+  conteudo?: string
+}
+type AlertaEst = { tipo?: string; prioridade?: string; titulo?: string; detalhe?: string }
+type RecomendacaoEst = {
+  acao?: string
+  prioridade?: string
+  produto?: string
+  motivo?: string
+  fundamentacao?: string
+  impacto_esperado?: string
+}
+type GlossarioEst = { termo?: string; definicao?: string }
+
+type AnaliseEstoque = {
+  gerado_em?: string
+  modelo?: string
+  agente?: string
+  resumo_executivo?: string
+  diagnostico?: string
+  metodologia?: string
+  saude_estoque?: string
+  blocos?: BlocoEst[]
+  indicadores?: IndicadorEst[]
+  alertas?: AlertaEst[]
+  recomendacoes?: RecomendacaoEst[]
+  glossario?: GlossarioEst[]
+  reposicao_urgente?: ReposicaoItem[]
+  curva_abc?: { resumo: AbcResumo[]; detalhes: AbcDetalhe[] }
+  periodo?: { inicio?: string; fim?: string }
+}
 
 const PAULO_MOCK = {
   agente: 'Paulo — PhD em PCP e Operações',
@@ -244,32 +301,36 @@ function fmtDia(iso?: string) {
 }
 
 export default function InsightsEstoquePage() {
-  // Por enquanto, estado local apenas para o seletor (sem workflow real ainda)
-  const hoje = todayInSaoPaulo()
-  const [range, setRangeState] = useState<DateRange>({
-    dataInicial: PAULO_MOCK.periodo.inicio,
-    dataFinal: PAULO_MOCK.periodo.fim || hoje,
-  })
-  const [limitMsg, setLimitMsg] = useState<string | null>(null)
+  const {
+    range,
+    setRange,
+    data,
+    loading,
+    error,
+    state,
+    isBusy,
+    run,
+    refresh,
+    limitMsg,
+    intervaloPendente,
+  } = useInsightsEstoque()
 
-  const setRange = (next: DateRange) => {
-    if (next.dataInicial && next.dataFinal && daysInRange(next.dataInicial, next.dataFinal) > MAX_RANGE_DAYS) {
-      setLimitMsg(`Intervalo limitado a 3 meses (${MAX_RANGE_DAYS} dias). Ajustamos a data inicial.`)
-    } else {
-      setLimitMsg(null)
-    }
-    setRangeState(clampRange(next))
-  }
-
-  const analise = PREVIEW_PAULO ? PAULO_MOCK : null
-  const periodoLabel = PREVIEW_PAULO
-    ? formatRangeLabel(range.dataInicial, range.dataFinal)
-    : analise
-      ? `${fmtDia(analise.periodo.inicio)} a ${fmtDia(analise.periodo.fim)}`
+  const response = data as Record<string, any> | null
+  const analiseReal = (response?.analise || null) as AnaliseEstoque | null
+  const analise: AnaliseEstoque | null = PREVIEW_PAULO ? (PAULO_MOCK as unknown as AnaliseEstoque) : analiseReal
+  const periodoLabel =
+    response?.dataInicial && response?.dataFinal
+      ? `${fmtDia(response.dataInicial)} a ${fmtDia(response.dataFinal)}`
       : null
   const geradoEm = analise?.gerado_em ? new Date(analise.gerado_em).toLocaleString('pt-BR') : null
   const saude = analise?.saude_estoque
-  const blocos = analise?.blocos || []
+  const blocos = (analise?.blocos || []).filter((b) => b.titulo || b.conteudo)
+  const indicadores = analise?.indicadores || []
+  const alertas = analise?.alertas || []
+  const recomendacoes = analise?.recomendacoes || []
+  const glossario = analise?.glossario || []
+  const reposicaoUrgente = analise?.reposicao_urgente || []
+  const curvaAbc = analise?.curva_abc || { resumo: [], detalhes: [] }
 
   return (
     <div>
@@ -286,17 +347,7 @@ export default function InsightsEstoquePage() {
         }
       />
 
-      {/* Banner PREVIEW */}
-      {PREVIEW_PAULO && (
-        <div className="mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-dashed border-[var(--accent)]/50 bg-[var(--accent-soft)]/30 p-3">
-          <StatusPill tone="orange">PREVIEW</StatusPill>
-          <span className="text-[11px] font-extrabold uppercase tracking-tight text-[var(--accent)]">
-            Mockup visual baseado na estrutura real do Paulo PCP · workflow N8N dedicado ainda não foi criado
-          </span>
-        </div>
-      )}
-
-      {/* Seletor próprio (preview — disparo de coleta será habilitado quando o workflow existir) */}
+      {/* Seletor próprio desta página (independente) */}
       <div className="mb-4">
         <DateRangePicker
           value={range}
@@ -304,12 +355,34 @@ export default function InsightsEstoquePage() {
           note={limitMsg}
           hidePresets
           showAtualizar
-          onAtualizar={() => { /* aguardando workflow */ }}
-          atualizando={false}
+          onAtualizar={run}
+          atualizando={isBusy}
         />
       </div>
 
-      {!analise ? (
+      {/* Status da coleta */}
+      <div className="mb-4 flex flex-wrap items-center gap-2">
+        {isBusy && <StatusPill tone="blue">Analisando {fmtDia(range.dataInicial)} a {fmtDia(range.dataFinal)}…</StatusPill>}
+        {!isBusy && intervaloPendente && (
+          <StatusPill tone="orange">Intervalo alterado — clique em Atualizar para recolher</StatusPill>
+        )}
+        {state === 'success' && <StatusPill tone="green">Análise atualizada!</StatusPill>}
+        {state === 'timeout' && <StatusPill tone="red">Tempo esgotado — tente novamente</StatusPill>}
+        {state === 'error' && <StatusPill tone="red">Falha ao iniciar a análise</StatusPill>}
+        <button onClick={refresh} className="action-button ml-auto px-4 text-xs font-bold">
+          Recarregar
+        </button>
+      </div>
+
+      {error && !analise ? (
+        <Panel title="Análise indisponível" subtitle="O Paulo ainda não processou este período.">
+          <div className="p-6">
+            <EmptyState title={error} detail="Selecione o intervalo (máx. 3 meses) e clique em Atualizar." />
+          </div>
+        </Panel>
+      ) : loading && !analise ? (
+        <LoadingBlock height="h-40" />
+      ) : !analise ? (
         <EmptyState title="Análise ainda não gerada" detail="Defina o intervalo e clique em Atualizar para gerar a leitura do Paulo." />
       ) : (
         <>
@@ -377,11 +450,11 @@ export default function InsightsEstoquePage() {
           </Panel>
 
           {/* Indicadores */}
-          {analise.indicadores.length > 0 && (
+          {indicadores.length > 0 && (
             <div className="mt-4">
               <Panel title="Indicadores" subtitle="Métricas-chave lidas pelo agente">
                 <div className="grid grid-cols-2 gap-3 p-4 sm:grid-cols-3 lg:grid-cols-5">
-                  {analise.indicadores.map((ind, idx) => (
+                  {indicadores.map((ind, idx) => (
                     <div key={`${ind.label}-${idx}`} className="hover-card-soft rounded-xl border border-[var(--border)] bg-white/[0.03] p-3">
                       <div className="break-words text-[11px] font-extrabold uppercase tracking-tight text-[var(--text-muted)]">{ind.label}</div>
                       <div
@@ -397,13 +470,13 @@ export default function InsightsEstoquePage() {
           )}
 
           {/* Curva ABC — visão estratégica do mix do intervalo */}
-          {analise.curva_abc && analise.curva_abc.resumo.length > 0 && (
+          {curvaAbc.resumo.length > 0 && (
             <div className="mt-4">
               <Panel title="Curva ABC do mix vendido" subtitle="Classificação por receita no intervalo · Lei de Pareto aplicada ao SKU">
                 <div className="p-4">
                   {/* 3 cards de resumo: A, B, C */}
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-                    {analise.curva_abc.resumo.map((c) => {
+                    {curvaAbc.resumo.map((c) => {
                       const tone =
                         c.classe === 'A' ? 'green' : c.classe === 'B' ? 'orange' : 'muted'
                       const barColor =
@@ -454,7 +527,7 @@ export default function InsightsEstoquePage() {
                   </div>
 
                   {/* Tabela detalhada com classificação por SKU */}
-                  {analise.curva_abc.detalhes.length > 0 && (
+                  {curvaAbc.detalhes.length > 0 && (
                     <div className="mt-4 max-h-[520px] overflow-auto pr-1">
                       <table className="data-table min-w-full">
                         <thead className="sticky top-0 z-10 bg-[var(--bg-panel)]">
@@ -469,7 +542,7 @@ export default function InsightsEstoquePage() {
                           </tr>
                         </thead>
                         <tbody>
-                          {analise.curva_abc.detalhes.map((d, idx) => {
+                          {curvaAbc.detalhes.map((d, idx) => {
                             const tone =
                               d.classe === 'A' ? 'green' : d.classe === 'B' ? 'orange' : 'muted'
                             return (
@@ -498,7 +571,7 @@ export default function InsightsEstoquePage() {
           )}
 
           {/* Reposição urgente — tabela específica do Paulo (até 30 itens com scroll) */}
-          {analise.reposicao_urgente.length > 0 && (
+          {reposicaoUrgente.length > 0 && (
             <div className="mt-4">
               <Panel title="Reposição urgente" subtitle="Variações com menor cobertura — risco direto de ruptura · até 30 itens">
                 <div className="p-3 sm:p-4">
@@ -515,7 +588,7 @@ export default function InsightsEstoquePage() {
                         </tr>
                       </thead>
                       <tbody>
-                        {analise.reposicao_urgente.slice(0, 30).map((r, idx) => (
+                        {reposicaoUrgente.slice(0, 30).map((r, idx) => (
                           <tr key={`${r.codigo}-${idx}`}>
                             <td className="break-words">{r.produto}</td>
                             <td className="break-words text-[var(--text-secondary)]">{r.variacao}</td>
@@ -541,12 +614,12 @@ export default function InsightsEstoquePage() {
 
           {/* Alertas + Recomendações */}
           <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-2">
-            <Panel title={`Alertas (${analise.alertas.length})`} subtitle="Itens que exigem atenção">
+            <Panel title={`Alertas (${alertas.length})`} subtitle="Itens que exigem atenção">
               <div className="space-y-2 p-4">
-                {analise.alertas.length === 0 ? (
+                {alertas.length === 0 ? (
                   <EmptyState title="Sem alertas" detail="O agente não sinalizou alertas neste período." />
                 ) : (
-                  analise.alertas.map((a, idx) => (
+                  alertas.map((a, idx) => (
                     <div key={`${a.titulo}-${idx}`} className="hover-card-soft rounded-xl border border-[var(--border)] bg-white/[0.02] p-3">
                       <div className="flex flex-wrap items-center gap-2">
                         <StatusPill tone={toneByPrioridade[a.prioridade || 'baixa'] || 'muted'}>
@@ -562,12 +635,12 @@ export default function InsightsEstoquePage() {
               </div>
             </Panel>
 
-            <Panel title={`Recomendações (${analise.recomendacoes.length})`} subtitle="Ações sugeridas pelo agente">
+            <Panel title={`Recomendações (${recomendacoes.length})`} subtitle="Ações sugeridas pelo agente">
               <div className="space-y-2 p-4">
-                {analise.recomendacoes.length === 0 ? (
+                {recomendacoes.length === 0 ? (
                   <EmptyState title="Sem recomendações" detail="O agente não sugeriu ações neste período." />
                 ) : (
-                  analise.recomendacoes.map((r, idx) => (
+                  recomendacoes.map((r, idx) => (
                     <div key={`${r.produto}-${idx}`} className="hover-card-soft rounded-xl border border-[var(--border)] bg-white/[0.02] p-3">
                       <div className="flex flex-wrap items-center gap-2">
                         <StatusPill tone={toneByPrioridade[r.prioridade || 'baixa'] || 'muted'}>
@@ -593,11 +666,11 @@ export default function InsightsEstoquePage() {
           </div>
 
           {/* Glossário */}
-          {analise.glossario.length > 0 && (
+          {glossario.length > 0 && (
             <div className="mt-4">
               <Panel title="Glossário" subtitle="Termos usados na análise, explicados pelo agente">
                 <div className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-2">
-                  {analise.glossario.map((g, idx) => (
+                  {glossario.map((g, idx) => (
                     <div key={`${g.termo}-${idx}`} className="hover-card-soft rounded-xl border border-[var(--border)] bg-white/[0.02] p-3">
                       <div className="break-words text-sm font-extrabold text-[var(--text-primary)]">{g.termo}</div>
                       <p className="m-0 mt-1 break-words text-sm leading-relaxed text-[var(--text-secondary)]">{g.definicao}</p>

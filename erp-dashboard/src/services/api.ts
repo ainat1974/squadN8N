@@ -111,6 +111,33 @@ export async function triggerOverview(dataInicial: string, dataFinal: string) {
   if (!res.ok) throw new Error(`Falha ao iniciar coleta da Visao Geral: ${res.status}`)
 }
 
+// ============================================================
+// Workflow INDEPENDENTE: Insights IA Estoque (Paulo PCP)
+// ============================================================
+
+/** Le o ultimo snapshot da analise de estoque gerada pelo Paulo. */
+export async function fetchInsightsEstoque() {
+  const res = await fetch(`${BASE_URL}/webhook/dados-estoque-ia`, {
+    headers: { Accept: 'application/json' },
+  })
+  if (!res.ok) throw new Error(`Erro ao buscar insights estoque: ${res.status}`)
+  const json = await res.json()
+  if (json && json.success === false) {
+    throw new Error(json.error || 'Análise de estoque ainda não gerada')
+  }
+  return json
+}
+
+/** Dispara a coleta + analise do Paulo para o intervalo informado. */
+export async function triggerInsightsEstoque(dataInicial: string, dataFinal: string) {
+  const res = await fetch(`${N8N_HOST}/webhook/coletar-estoque-ia`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ dataInicial, dataFinal }),
+  })
+  if (!res.ok) throw new Error(`Falha ao iniciar analise de estoque: ${res.status}`)
+}
+
 export function formatBRL(value: number): string {
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value)
 }

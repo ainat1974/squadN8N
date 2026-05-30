@@ -23,6 +23,9 @@ const {
 const OUT = path.join('squads', 'n8n-erp-dashboard', 'output', 'workflow-overview.json');
 const MAX_DIAS = 90;
 
+const OPENAI_CRED_ID = 'cCFxJ8gcTdB3fTEk';
+const OPENAI_CRED_NAME = 'OpenAI account';
+
 // Periodo + janela anterior de mesmo tamanho (para setas de variacao).
 const DEFINIR_PERIODO = `const input = $input.first().json || {};
 const body = input.body || input.json || input;
@@ -260,11 +263,137 @@ return [{ json: {
   }
 } }];`;
 
+// ===== AGENTE DIEGO (Diretor Executivo, cross-domain) =====
+// Le o resumo deterministico (KPIs, prioridades, saude) + dados-fonte
+// dos transformers e devolve uma leitura executiva: blocos priorizados,
+// recomendacoes acionaveis e proximos passos. Mesmo padrao da Fernanda.
+const PREPARAR_PROMPT_DIEGO = `const ctx = $('Preparar Contexto').first().json;
+const resumo = $('Montar Resumo').first().json || {};
+let vendas = {}, estoque = {}, fin = {};
+try { vendas = $('Transformar Vendas').first().json.dados || {}; } catch (e) {}
+try { estoque = $('Transformar Estoque').first().json.dados || {}; } catch (e) {}
+try { fin = $('Transformar Financeiro').first().json || {}; } catch (e) {}
+
+const num = (v) => Number(v || 0) || 0;
+const round = (v) => Math.round((Number(v) || 0) * 100) / 100;
+
+const payload = {
+  periodo: { inicio: ctx.dataInicial, fim: ctx.dataFinal, dias: ctx.diasIntervalo || 1 },
+  periodo_anterior: { inicio: ctx.dataInicialAnterior, fim: ctx.dataFinalAnterior },
+  kpis: resumo.kpis || [],
+  trends: resumo.trends || {},
+  saude: resumo.saude || {},
+  prioridades_deterministicas: (resumo.prioridades || []).slice(0, 6),
+  vendas: {
+    receita: round(num(vendas.summary && vendas.summary.receita_total)),
+    volume: num(vendas.summary && vendas.summary.volume_vendas),
+    ticket_medio: round(num(vendas.summary && vendas.summary.ticket_medio)),
+    top_produtos: (vendas.top_produtos || []).slice(0, 5)
+  },
+  estoque: {
+    skus_criticos: num(estoque.summary && estoque.summary.skus_criticos),
+    skus_alerta: num(estoque.summary && estoque.summary.skus_alerta),
+    capital_estoque: round(num(estoque.summary && estoque.summary.valor_total_estoque))
+  },
+  financeiro: {
+    caixa_recebido: round(num(fin.fluxoCaixa && fin.fluxoCaixa.summary && fin.fluxoCaixa.summary.pagamentos_realizados)),
+    a_receber: round(num(fin.contasReceber && fin.contasReceber.summary && fin.contasReceber.summary.total_aberto)),
+    vencido: round(num(fin.contasReceber && fin.contasReceber.summary && fin.contasReceber.summary.total_vencido)),
+    top_devedores: (fin.contasReceber && fin.contasReceber.top_devedores || []).slice(0, 5)
+  }
+};
+
+const system = [
+  'Voce e Diego, diretor executivo (CEO/COO) com 20 anos de varejo e operacao de pequena e media empresa. Atua como mentor do gestor da Tech Malhas (malharia em Franca/SP).',
+  'Sua tarefa: dar uma leitura EXECUTIVA cross-domain do intervalo selecionado (' + ctx.dataInicial + ' a ' + ctx.dataFinal + '). Conecte vendas, estoque e financeiro em uma narrativa unica de decisao.',
+  'CONTEXTO TEMPORAL: a analise e PONTUAL e refere-se aos eventos do intervalo. Vendas e caixa recebido seguem o intervalo. Estoque e snapshot atual. Variacoes "vs anterior" comparam com a janela imediatamente anterior de mesmo tamanho.',
+  'NUNCA invente numeros — use APENAS os valores do JSON enviado. Seja didatico: ao citar conceitos (margem, ciclo, ruptura), explique brevemente.',
+  'Responda APENAS com objeto JSON valido (sem markdown, sem code fences).',
+  'Tom: estrategico e direto, portugues BR, foco em DECISAO. Nada de jargao sem explicacao.',
+  '',
+  'Schema obrigatorio:',
+  '{',
+  '  "resumo_executivo": "2 a 4 frases sobre o intervalo: o que aconteceu, o que mais importa, qual a acao prioritaria.",',
+  '  "diagnostico": "1 paragrafo (4 a 6 frases) cruzando vendas + estoque + financeiro. Explique como uma area afeta a outra.",',
+  '  "metodologia": "2 a 3 frases dizendo quais sinais voce olhou (variacao vs anterior, concentracao, ruptura, inadimplencia) e como ler.",',
+  '  "saude_geral": "boa|atencao|critica",',
+  '  "blocos": [ { "prioridade": 1, "severidade": "critico|atencao|ok", "categoria": "rotulo curto", "titulo": "frase de destaque", "valor": "numero/moeda principal (opcional)", "area": "vendas|estoque|financeiro|geral", "conteudo": "1 a 3 frases com o achado e a acao" } ],',
+  '  "recomendacoes": [ { "prioridade": "alta|media|baixa", "acao": "string curta", "area": "vendas|estoque|financeiro|geral", "motivo": "string", "fundamentacao": "ancorada em um conceito de gestao", "impacto_esperado": "string" } ],',
+  '  "proximos_passos": [ "string acionavel 1", "string acionavel 2", "string acionavel 3" ]',
+  '}',
+  '',
+  'REGRA DOS BLOCOS: 3 a 6 blocos ORDENADOS por prioridade. Cada bloco indica a area de origem. Use "critico" para risco que exige acao imediata, "atencao" para acompanhar, "ok" para saudavel.',
+  'Regras: 3 a 6 blocos, 2 a 5 recomendacoes, 3 a 5 proximos passos.'
+].join('\\n');
+
+const prompt_agente = ['Snapshot executivo do periodo:', JSON.stringify(payload), '', 'Gere o JSON conforme o schema.'].join('\\n');
+
+return [{ json: { prompt_agente, system_message: system, payload_ia: payload } }];`;
+
+const PARSE_DIEGO = `const item = $input.first().json;
+const raw = item.output || item.text || item.response || '';
+let ctx = {};
+try { ctx = $('Preparar Prompt Diego').first().json.payload_ia || {}; } catch (e) {}
+
+function tryParse(text) {
+  if (!text || typeof text !== 'string') return null;
+  let c = text.trim().replace(/^\\s*\`\`\`json\\s*/i, '').replace(/\\s*\`\`\`\\s*$/i, '').replace(/^\\s*\`\`\`\\s*/, '');
+  try { return JSON.parse(c); } catch (e) {}
+  const m = c.match(/\\{[\\s\\S]*\\}/);
+  if (m) { try { return JSON.parse(m[0]); } catch (e) {} }
+  return null;
+}
+
+function normBlocos(arr) {
+  if (!Array.isArray(arr)) return [];
+  const sevOk = { critico: 1, atencao: 1, ok: 1 };
+  return arr
+    .map((b, i) => ({
+      prioridade: Number(b && b.prioridade) || (i + 1),
+      severidade: sevOk[String(b && b.severidade || '').toLowerCase()] ? String(b.severidade).toLowerCase() : 'atencao',
+      categoria: String(b && b.categoria || '').trim(),
+      titulo: String(b && b.titulo || '').trim(),
+      valor: b && b.valor != null ? String(b.valor) : '',
+      area: String(b && b.area || 'geral').toLowerCase(),
+      conteudo: String(b && b.conteudo || '').trim()
+    }))
+    .filter(b => b.titulo || b.conteudo)
+    .sort((a, b) => a.prioridade - b.prioridade)
+    .slice(0, 6);
+}
+
+const p = tryParse(raw);
+const base = { gerado_em: new Date().toISOString(), modelo: 'gpt-4o', agente: 'Diego Executivo', contexto: ctx };
+const analise = (p && typeof p === 'object') ? {
+  ...base,
+  resumo_executivo: String(p.resumo_executivo || '').trim(),
+  diagnostico: String(p.diagnostico || '').trim(),
+  metodologia: String(p.metodologia || '').trim(),
+  saude_geral: p.saude_geral || 'atencao',
+  blocos: normBlocos(p.blocos),
+  recomendacoes: Array.isArray(p.recomendacoes) ? p.recomendacoes.slice(0, 6) : [],
+  proximos_passos: Array.isArray(p.proximos_passos) ? p.proximos_passos.slice(0, 5) : []
+} : {
+  ...base,
+  resumo_executivo: '',
+  diagnostico: '',
+  metodologia: '',
+  saude_geral: 'indisponivel',
+  blocos: [], recomendacoes: [], proximos_passos: [],
+  erro: 'Falha ao interpretar resposta do agente',
+  raw: String(raw).slice(0, 400)
+};
+
+return [{ json: { analiseDiego: analise } }];`;
+
 const SALVAR_OVERVIEW = `const staticData = $getWorkflowStaticData('global');
 const resumo = $('Montar Resumo').first().json;
+let analiseDiego = null;
+try { analiseDiego = $('Parse Diego').first().json.analiseDiego || null; } catch (e) {}
+
 const atualizadoEm = new Date().toISOString();
-staticData.overview = { ...resumo, atualizadoEm };
-return [{ json: { sucesso: true, dataInicial: resumo.dataInicial, dataFinal: resumo.dataFinal, atualizadoEm } }];`;
+staticData.overview = { ...resumo, analise: analiseDiego, atualizadoEm };
+return [{ json: { sucesso: true, dataInicial: resumo.dataInicial, dataFinal: resumo.dataFinal, atualizadoEm, agente: analiseDiego?.agente || null } }];`;
 
 const LER_OVERVIEW = `const staticData = $getWorkflowStaticData('global');
 const snap = staticData.overview || null;
@@ -320,7 +449,34 @@ const workflow = {
     code('transformar-financeiro', 'Transformar Financeiro', TRANSFORMAR_FINANCEIRO, [2400, 400], { continueOnFail: true }),
     code('coletar-anterior', 'Coletar Anterior', COLETAR_ANTERIOR, [2640, 400], { continueOnFail: true, notes: 'Totais do periodo anterior para variacao' }),
     code('montar-resumo', 'Montar Resumo', MONTAR_RESUMO, [2880, 400]),
-    code('salvar-overview', 'Salvar Overview', SALVAR_OVERVIEW, [3120, 400]),
+    code('preparar-prompt-diego', 'Preparar Prompt Diego', PREPARAR_PROMPT_DIEGO, [3120, 400], { notes: 'Cross-domain executivo: vendas + estoque + financeiro' }),
+    {
+      parameters: {
+        model: { __rl: true, value: 'gpt-4o', mode: 'list' },
+        options: { temperature: 0.2, responseFormat: 'json_object' },
+      },
+      id: 'openai-diego',
+      name: 'OpenAI Diego (gpt-4o)',
+      type: '@n8n/n8n-nodes-langchain.lmChatOpenAi',
+      typeVersion: 1.2,
+      position: [3120, 600],
+      credentials: { openAiApi: { id: OPENAI_CRED_ID, name: OPENAI_CRED_NAME } },
+    },
+    {
+      parameters: {
+        promptType: 'define',
+        text: '={{ $json.prompt_agente }}',
+        options: { systemMessage: '={{ $json.system_message }}' },
+      },
+      id: 'agente-diego',
+      name: 'Diego Executivo',
+      type: '@n8n/n8n-nodes-langchain.agent',
+      typeVersion: 1.7,
+      position: [3300, 400],
+      continueOnFail: true,
+    },
+    code('parse-diego', 'Parse Diego', PARSE_DIEGO, [3480, 400], { continueOnFail: true }),
+    code('salvar-overview', 'Salvar Overview', SALVAR_OVERVIEW, [3660, 400]),
     {
       parameters: { httpMethod: 'GET', path: 'dados-overview', responseMode: 'responseNode', options: {} },
       id: 'api-webhook', name: 'API GET /dados', type: 'n8n-nodes-base.webhook', typeVersion: 1.1,
@@ -356,7 +512,11 @@ const workflow = {
     'Coletar Financeiro': { main: [[{ node: 'Transformar Financeiro', type: 'main', index: 0 }]] },
     'Transformar Financeiro': { main: [[{ node: 'Coletar Anterior', type: 'main', index: 0 }]] },
     'Coletar Anterior': { main: [[{ node: 'Montar Resumo', type: 'main', index: 0 }]] },
-    'Montar Resumo': { main: [[{ node: 'Salvar Overview', type: 'main', index: 0 }]] },
+    'Montar Resumo': { main: [[{ node: 'Preparar Prompt Diego', type: 'main', index: 0 }]] },
+    'Preparar Prompt Diego': { main: [[{ node: 'Diego Executivo', type: 'main', index: 0 }]] },
+    'OpenAI Diego (gpt-4o)': { ai_languageModel: [[{ node: 'Diego Executivo', type: 'ai_languageModel', index: 0 }]] },
+    'Diego Executivo': { main: [[{ node: 'Parse Diego', type: 'main', index: 0 }]] },
+    'Parse Diego': { main: [[{ node: 'Salvar Overview', type: 'main', index: 0 }]] },
     'API GET /dados': { main: [[{ node: 'Ler Overview', type: 'main', index: 0 }]] },
     'Ler Overview': { main: [[{ node: 'Responder API', type: 'main', index: 0 }]] },
   },
